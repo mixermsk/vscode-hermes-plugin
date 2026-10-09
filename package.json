@@ -35,6 +35,32 @@
           "type": "webview"
         }
       ]
+    },
+    "configuration": {
+      "title": "Hermes ACP",
+      "properties": {
+        "hermesAcp.executable": {
+          "type": "string",
+          "default": "hermes",
+          "description": "Path or command used to launch Hermes Agent."
+        },
+        "hermesAcp.arguments": {
+          "type": "array",
+          "default": ["acp"],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to the Hermes executable."
+        },
+        "hermesAcp.environment": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Additional environment variables passed to Hermes. Do not store credentials here."
+        }
+      }
     }
   },
   "scripts": {
