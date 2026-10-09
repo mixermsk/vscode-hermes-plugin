@@ -8,7 +8,10 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["AI", "Chat"],
+  "categories": [
+    "AI",
+    "Chat"
+  ],
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
@@ -46,7 +49,9 @@
         },
         "hermesAcp.arguments": {
           "type": "array",
-          "default": ["acp"],
+          "default": [
+            "acp"
+          ],
           "items": {
             "type": "string"
           },
@@ -69,6 +74,7 @@
     "package": "webpack --mode production",
     "vsix": "npm run package && vsce package --no-dependencies --allow-missing-repository",
     "compile-tests": "tsc -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:unit": "npm run compile-tests && mocha out/test/unit/**/*.test.js --ui tdd",
     "lint": "eslint src --max-warnings 0",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -82,10 +88,13 @@
     "@vscode/vsce": "^4.0.0",
     "eslint": "^9.0.0",
     "mocha": "^12.0.3",
+    "ts-loader": "^9.5.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.0.0",
-    "ts-loader": "^9.5.2",
     "webpack": "^5.95.0",
     "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.8.0"
   }
 }
