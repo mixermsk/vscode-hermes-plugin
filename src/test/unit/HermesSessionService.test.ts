@@ -25,7 +25,9 @@ suite('HermesSessionService', () => {
           controller: {
             async initialize() { return { protocolVersion: 1 }; },
             async createSession() { return { sessionId: 'session-1' }; },
-            async resumeSession() { throw new Error('not used'); }
+            async resumeSession() { throw new Error('not used'); },
+            async prompt() { throw new Error('not used'); },
+            async cancel() { throw new Error('not used'); }
           }
         };
       }

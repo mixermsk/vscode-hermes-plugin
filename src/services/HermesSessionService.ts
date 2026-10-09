@@ -12,6 +12,8 @@ export interface AcpSessionControllerLike {
   initialize(): Promise<Readonly<{ protocolVersion: number }>>;
   createSession(cwd: string): Promise<Readonly<{ sessionId: string }>>;
   resumeSession(sessionId: string, cwd: string): Promise<Readonly<{ sessionId: string }>>;
+  prompt(sessionId: string, text: string): Promise<void>;
+  cancel(sessionId: string): Promise<void>;
 }
 
 export interface AcpControllerFactory {
@@ -19,12 +21,18 @@ export interface AcpControllerFactory {
 }
 
 export class HermesSessionService {
+  private activeController: AcpSessionControllerLike | undefined;
+
   public constructor(
     private readonly repositoryResolver: RepositoryResolver,
     private readonly controllerFactory: AcpControllerFactory,
     private readonly registry: SessionRegistry,
     private readonly adapter = new HermesAgentAdapter()
   ) {}
+
+  public get controller(): AcpSessionControllerLike | undefined {
+    return this.activeController;
+  }
 
   public async open(cwd: string): Promise<SessionLifecycleResult> {
     const resolution = await this.repositoryResolver.resolve(cwd);
@@ -33,6 +41,7 @@ export class HermesSessionService {
     }
 
     const connection = await this.controllerFactory.start(this.adapter.buildLaunchSpec(resolution.identity));
+    this.activeController = connection.controller;
     await connection.controller.initialize();
     return new SessionLifecycle(this.registry, {
       create: (sessionCwd) => connection.controller.createSession(sessionCwd),

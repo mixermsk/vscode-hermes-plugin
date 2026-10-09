@@ -5,29 +5,21 @@ import { PermissionController } from './ui/PermissionController';
 import { SessionRegistry } from './services/SessionRegistry';
 import { HermesSessionService } from './services/HermesSessionService';
 import { GitRepositoryResolver } from './services/GitRepositoryResolver';
+import { ChatViewProvider } from './ui/ChatViewProvider';
 
-const CHAT_VIEW_ID = 'hermesAcp.chat';
-
-class ChatPlaceholderViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = CHAT_VIEW_ID;
-
-  public resolveWebviewView(webviewView: vscode.WebviewView): void {
-    webviewView.webview.options = { enableScripts: false };
-    webviewView.webview.html = [
-      '<!DOCTYPE html>',
-      '<html lang="en">',
-      '<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>',
-      '<body><h2>Hermes ACP</h2><p>Connecting to the repository session…</p></body>',
-      '</html>'
-    ].join('');
-  }
-}
+const CHAT_VIEW_ID = ChatViewProvider.viewType;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Hermes ACP');
+  const chatProvider = new ChatViewProvider();
   const permissionController = new PermissionController(new VsCodePermissionPresenter());
   const controllerFactory = new ChildProcessAcpControllerFactory({
-    onSessionUpdate: async (notification) => output.appendLine(`session/update: ${notification.update.sessionUpdate}`),
+    onSessionUpdate: async (notification) => {
+      output.appendLine(`session/update: ${notification.update.sessionUpdate}`);
+      if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
+        chatProvider.appendText(notification.update.content.text);
+      }
+    },
     onPermissionRequest: (request) => permissionController.requestPermission(request)
   });
   const configuration = vscode.workspace.getConfiguration('hermesAcp');
@@ -42,7 +34,6 @@ export function activate(context: vscode.ExtensionContext): void {
     new SessionRegistry(new VsCodeKeyValueStore(context.globalState)),
     adapter
   );
-  const chatProvider = new ChatPlaceholderViewProvider();
   const openChatCommand = vscode.commands.registerCommand('hermesAcp.openChat', async () => {
     await vscode.commands.executeCommand('workbench.view.extension.hermes-acp');
     await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
@@ -57,6 +48,12 @@ export function activate(context: vscode.ExtensionContext): void {
       const message = result.kind === 'resume-failed'
         ? `Could not resume Hermes session ${result.record.sessionId}. No new session was created.`
         : `${result.kind === 'resumed' ? 'Resumed' : 'Created'} Hermes session ${result.sessionId}.`;
+      if (result.kind !== 'resume-failed') {
+        const controller = sessionService.controller;
+        if (controller !== undefined) {
+          chatProvider.setSession(result.sessionId, (text) => controller.prompt(result.sessionId, text));
+        }
+      }
       output.appendLine(message);
       await vscode.window.showInformationMessage(message);
     } catch (error) {
@@ -68,7 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     output,
-    vscode.window.registerWebviewViewProvider(ChatPlaceholderViewProvider.viewType, chatProvider),
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider),
     openChatCommand
   );
 }
