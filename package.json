@@ -1,0 +1,64 @@
+{
+  "name": "hermes-acp",
+  "displayName": "Hermes ACP",
+  "description": "Hermes Agent client for VS Code via Agent Client Protocol",
+  "version": "0.0.1",
+  "publisher": "mixermsk",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Chat"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hermesAcp.openChat",
+        "title": "Hermes ACP: Open Chat"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hermes-acp",
+          "title": "Hermes",
+          "icon": "resources/hermes.svg"
+        }
+      ]
+    },
+    "views": {
+      "hermes-acp": [
+        {
+          "id": "hermesAcp.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "webpack --mode development",
+    "watch": "webpack --watch --mode development",
+    "package": "webpack --mode production",
+    "vsix": "npm run package && vsce package --no-dependencies --allow-missing-repository",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "lint": "eslint src --max-warnings 0",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "test": "node ./out/test/integration/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "eslint": "^9.0.0",
+    "mocha": "^12.0.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.0.0",
+    "ts-loader": "^9.5.2",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

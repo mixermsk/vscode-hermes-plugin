@@ -1,0 +1,10 @@
+.vscode/**
+.hermes/**
+src/**
+out/**
+node_modules/**
+*.ts
+*.map
+eslint.config.mjs
+tsconfig*.json
+webpack.config.js
