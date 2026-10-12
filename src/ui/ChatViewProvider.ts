@@ -1,21 +1,40 @@
+import { readFileSync } from 'node:fs';
 import type * as vscode from 'vscode';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
+
+export interface ChatViewAssets {
+  mediaUri: vscode.Uri;
+  templateUri: vscode.Uri;
+  stylesheetUri: vscode.Uri;
+  scriptUri: vscode.Uri;
+}
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hermesAcp.chat';
   private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
 
+  public constructor(private readonly assets: ChatViewAssets) {}
+
   public resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableScripts: true };
-    view.webview.html = this.html();
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.assets.mediaUri]
+    };
+    view.webview.html = this.html(view.webview);
     view.webview.onDidReceiveMessage(async (message: unknown) => {
       if (!isPromptMessage(message) || this.promptHandler === undefined) {
         return;
       }
-      await this.promptHandler(message.text);
+      try {
+        await this.promptHandler(message.text);
+        await view.webview.postMessage({ type: 'ready' });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        await view.webview.postMessage({ type: 'error', text });
+      }
     });
   }
 
@@ -28,9 +47,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.view?.webview.postMessage({ type: 'text', text });
   }
 
-  private html(): string {
-    return `<!DOCTYPE html><html><body><h2>Hermes ACP</h2><div id="session">No session connected.</div><pre id="messages"></pre><form id="form"><textarea id="prompt" rows="4" placeholder="Ask Hermes…"></textarea><button>Send</button></form><script>const vscode=acquireVsCodeApi();const session=document.getElementById('session');const messages=document.getElementById('messages');document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const prompt=document.getElementById('prompt');const text=prompt.value.trim();if(text){vscode.postMessage({type:'prompt',text});messages.textContent+='You: '+text+'\n';prompt.value='';}});window.addEventListener('message',event=>{const message=event.data;if(message.type==='session'){session.textContent='Session: '+message.sessionId;}if(message.type==='text'){messages.textContent+=message.text;}});</script></body></html>`;
+  private html(webview: vscode.Webview): string {
+    const template = readFileSync(this.assets.templateUri.fsPath, 'utf8');
+
+    return renderChatHtml(template, {
+      cspSource: webview.cspSource,
+      stylesheetUri: webview.asWebviewUri(this.assets.stylesheetUri).toString(),
+      scriptUri: webview.asWebviewUri(this.assets.scriptUri).toString()
+    });
   }
+}
+
+export function renderChatHtml(template: string, resources: ChatWebviewResources): string {
+  return template
+    .replaceAll('{{cspSource}}', resources.cspSource)
+    .replace('{{stylesheetUri}}', resources.stylesheetUri)
+    .replace('{{scriptUri}}', resources.scriptUri);
+}
+
+export interface ChatWebviewResources {
+  cspSource: string;
+  stylesheetUri: string;
+  scriptUri: string;
 }
 
 function isPromptMessage(value: unknown): value is { type: 'prompt'; text: string } {

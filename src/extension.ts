@@ -11,7 +11,13 @@ const CHAT_VIEW_ID = ChatViewProvider.viewType;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Hermes ACP');
-  const chatProvider = new ChatViewProvider();
+  const mediaUri = vscode.Uri.joinPath(context.extensionUri, 'media');
+  const chatProvider = new ChatViewProvider({
+    mediaUri,
+    templateUri: vscode.Uri.joinPath(mediaUri, 'chat.html'),
+    stylesheetUri: vscode.Uri.joinPath(mediaUri, 'chat.css'),
+    scriptUri: vscode.Uri.joinPath(mediaUri, 'chat.js')
+  });
   const permissionController = new PermissionController(new VsCodePermissionPresenter());
   const controllerFactory = new ChildProcessAcpControllerFactory({
     onSessionUpdate: async (notification) => {
