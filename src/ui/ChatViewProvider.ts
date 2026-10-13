@@ -2,6 +2,12 @@ import { readFileSync } from 'node:fs';
 import type * as vscode from 'vscode';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
+export type ChatConnectionHandler = () => Promise<void>;
+
+export interface ChatMessage {
+  role: 'user' | 'agent' | 'error';
+  text: string;
+}
 
 export interface ChatViewAssets {
   mediaUri: vscode.Uri;
@@ -14,6 +20,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hermesAcp.chat';
   private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
+  private connectionHandler: ChatConnectionHandler | undefined;
+  private sessionId: string | undefined;
+  private sessionTitle: string | undefined;
+  private readonly messages: ChatMessage[] = [];
 
   public constructor(private readonly assets: ChatViewAssets) {}
 
@@ -29,6 +39,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       try {
+        this.appendMessage('user', message.text);
         await this.promptHandler(message.text);
         await view.webview.postMessage({ type: 'ready' });
       } catch (error) {
@@ -36,15 +47,66 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await view.webview.postMessage({ type: 'error', text });
       }
     });
+    this.postState();
+    void this.connect();
   }
 
-  public setSession(sessionId: string, handler: ChatPromptHandler): void {
+  public setConnectionHandler(handler: ChatConnectionHandler): void {
+    this.connectionHandler = handler;
+  }
+
+  public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
+    this.sessionId = sessionId;
+    this.sessionTitle = title;
     this.promptHandler = handler;
-    void this.view?.webview.postMessage({ type: 'session', sessionId });
+    this.postState();
+  }
+
+  public setSessionTitle(sessionId: string, title: string | undefined): void {
+    if (this.sessionId !== sessionId) {
+      return;
+    }
+    this.sessionTitle = title;
+    this.postState();
   }
 
   public appendText(text: string): void {
+    const previous = this.messages.at(-1);
+    if (previous?.role === 'agent') {
+      previous.text += text;
+    } else {
+      this.messages.push({ role: 'agent', text });
+    }
     void this.view?.webview.postMessage({ type: 'text', text });
+  }
+
+  private async connect(): Promise<void> {
+    if (this.sessionId !== undefined || this.connectionHandler === undefined) {
+      return;
+    }
+    try {
+      await this.connectionHandler();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      await this.view?.webview.postMessage({ type: 'error', text });
+    }
+  }
+
+  private appendMessage(role: ChatMessage['role'], text: string): void {
+    this.messages.push({ role, text });
+    void this.view?.webview.postMessage({ type: 'message', role, text });
+  }
+
+  private postState(): void {
+    if (this.sessionId === undefined) {
+      return;
+    }
+    void this.view?.webview.postMessage({
+      type: 'restore',
+      sessionId: this.sessionId,
+      title: this.sessionTitle,
+      messages: this.messages
+    });
   }
 
   private html(webview: vscode.Webview): string {

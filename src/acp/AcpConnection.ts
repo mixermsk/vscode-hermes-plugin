@@ -7,6 +7,7 @@ import {
   type AcpAgentTransport,
   type AcpInitializeRequest,
   type AcpInitializeResult,
+  type AcpListSessionsResult,
   type AcpSessionResult
 } from './AcpSessionController';
 
@@ -37,7 +38,10 @@ export class AcpConnection implements AcpAgentTransport {
       acp.methods.agent.initialize,
       params
     );
-    return { protocolVersion: response.protocolVersion };
+    return {
+      protocolVersion: response.protocolVersion,
+      supportsSessionList: response.agentCapabilities?.sessionCapabilities?.list != null
+    };
   }
 
   public async newSession(params: Readonly<{ cwd: string; mcpServers: readonly [] }>): Promise<AcpSessionResult> {
@@ -57,6 +61,20 @@ export class AcpConnection implements AcpAgentTransport {
       mcpServers: []
     });
     return { sessionId: params.sessionId };
+  }
+
+  public async listSessions(params: Readonly<{ cwd: string; cursor?: string }>): Promise<AcpListSessionsResult> {
+    const response = await this.agent.request(acp.methods.agent.session.list, {
+      cwd: params.cwd,
+      ...(params.cursor === undefined ? {} : { cursor: params.cursor })
+    });
+    return {
+      sessions: response.sessions.map((session) => ({
+        sessionId: session.sessionId,
+        ...(session.title == null ? {} : { title: session.title })
+      })),
+      ...(response.nextCursor == null ? {} : { nextCursor: response.nextCursor })
+    };
   }
 
   public async prompt(params: Readonly<{ sessionId: string; text: string }>): Promise<void> {

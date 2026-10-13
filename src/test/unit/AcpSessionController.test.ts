@@ -11,7 +11,7 @@ suite('AcpSessionController', () => {
     const transport: AcpAgentTransport = {
       async initialize(params) {
         calls.push({ method: 'initialize', params });
-        return { protocolVersion: 1 } as AcpInitializeResult;
+        return { protocolVersion: 1, supportsSessionList: false } as AcpInitializeResult;
       },
       async newSession(params) {
         calls.push({ method: 'session/new', params });
@@ -20,6 +20,9 @@ suite('AcpSessionController', () => {
       async resumeSession(params) {
         calls.push({ method: 'session/resume', params });
         return { sessionId: params.sessionId };
+      },
+      async listSessions() {
+        throw new Error('not used in this test');
       },
       async prompt() {
         throw new Error('not used in this test');
@@ -48,6 +51,33 @@ suite('AcpSessionController', () => {
         method: 'session/resume',
         params: { sessionId: 'existing-session', cwd: '/work/project', mcpServers: [] }
       }
+    ]);
+  });
+
+  test('looks up a session title across paginated session listings', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const transport: AcpAgentTransport = {
+      async initialize() { return { protocolVersion: 1, supportsSessionList: true }; },
+      async newSession() { throw new Error('not used'); },
+      async resumeSession() { throw new Error('not used'); },
+      async listSessions(params) {
+        calls.push({ method: 'session/list', params });
+        return params.cursor === undefined
+          ? { sessions: [{ sessionId: 'other-session', title: 'Other' }], nextCursor: 'page-2' }
+          : { sessions: [{ sessionId: 'existing-session', title: 'Refactor chat transport' }] };
+      },
+      async prompt() { throw new Error('not used'); },
+      async cancel() { throw new Error('not used'); },
+      close() {}
+    };
+    const controller = new AcpSessionController(transport, 1);
+
+    const session = await controller.getSessionInfo('existing-session', '/work/project');
+
+    assert.deepEqual(session, { sessionId: 'existing-session', title: 'Refactor chat transport' });
+    assert.deepEqual(calls, [
+      { method: 'session/list', params: { cwd: '/work/project' } },
+      { method: 'session/list', params: { cwd: '/work/project', cursor: 'page-2' } }
     ]);
   });
 });

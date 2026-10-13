@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vm from 'node:vm';
-import { renderChatHtml } from '../../ui/ChatViewProvider';
+import { ChatViewProvider, renderChatHtml } from '../../ui/ChatViewProvider';
 
 suite('ChatViewProvider', () => {
   test('keeps the transcript scrollable and composer pinned after messages arrive', () => {
@@ -30,6 +30,57 @@ suite('ChatViewProvider', () => {
     assert.equal(harness.messages.children.length, 1);
     assert.equal(harness.messages.children[0].textContent, 'Hello, world!');
   });
+
+  test('starts disconnected, then restores the connected session and transcript', () => {
+    const harness = createChatHarness(chatScript());
+
+    assert.equal(harness.prompt.disabled, true);
+    assert.equal(harness.send.disabled, true);
+
+    harness.receive({
+      type: 'restore',
+      sessionId: 'session-1',
+      title: 'Refactor chat transport',
+      messages: [
+        { role: 'user', text: 'Hello' },
+        { role: 'agent', text: 'Hi there' }
+      ]
+    });
+
+    assert.equal(harness.session.textContent, 'Session: Refactor chat transport (session-1)');
+    assert.equal(harness.prompt.disabled, false);
+    assert.equal(harness.send.disabled, false);
+    assert.deepEqual(
+      harness.messages.children.map((message) => ({ className: message.className, text: message.textContent })),
+      [
+        { className: 'message user', text: 'Hello' },
+        { className: 'message agent', text: 'Hi there' }
+      ]
+    );
+  });
+
+  test('delivers a session set before the webview resolves', async () => {
+    const provider = new ChatViewProvider({
+      mediaUri: {} as never,
+      templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
+      stylesheetUri: {} as never,
+      scriptUri: {} as never
+    });
+    const posted: unknown[] = [];
+    provider.setSession('session-1', async () => {});
+
+    provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-webview://chat',
+        asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
+        async postMessage(message: unknown) { posted.push(message); return true; },
+        onDidReceiveMessage() { return { dispose() {} }; }
+      }
+    } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(posted, [{ type: 'restore', sessionId: 'session-1', title: undefined, messages: [] }]);
+  });
 });
 
 function chatTemplate(): string {
@@ -52,7 +103,13 @@ function webviewResources(): { cspSource: string; stylesheetUri: string; scriptU
   };
 }
 
-function createChatHarness(script: string): { messages: FakeElement; receive(message: unknown): void } {
+function createChatHarness(script: string): {
+  session: FakeElement;
+  messages: FakeElement;
+  prompt: FakeElement;
+  send: FakeElement;
+  receive(message: unknown): void;
+} {
   const elements = new Map<string, FakeElement>([
     ['session', new FakeElement()],
     ['messages', new FakeElement()],
@@ -60,6 +117,8 @@ function createChatHarness(script: string): { messages: FakeElement; receive(mes
     ['prompt', new FakeElement()],
     ['send', new FakeElement()]
   ]);
+  elements.get('prompt')!.disabled = true;
+  elements.get('send')!.disabled = true;
   let messageListener: ((event: { data: unknown }) => void) | undefined;
   vm.runInNewContext(script, {
     acquireVsCodeApi: () => ({ postMessage() {} }),
@@ -81,7 +140,10 @@ function createChatHarness(script: string): { messages: FakeElement; receive(mes
   });
 
   return {
+    session: elements.get('session')!,
     messages: elements.get('messages')!,
+    prompt: elements.get('prompt')!,
+    send: elements.get('send')!,
     receive(message: unknown) {
       assert.ok(messageListener, 'expected the webview to register a message listener');
       messageListener({ data: message });
@@ -101,6 +163,11 @@ class FakeElement {
   public appendChild(child: FakeElement): void {
     this.children.push(child);
     this.scrollHeight = this.children.length;
+  }
+
+  public replaceChildren(): void {
+    this.children.length = 0;
+    this.scrollHeight = 0;
   }
 
   public addEventListener(): void {}

@@ -8,8 +8,8 @@ export interface SessionStarter {
 }
 
 export type SessionLifecycleResult =
-  | Readonly<{ kind: 'created'; sessionId: string }>
-  | Readonly<{ kind: 'resumed'; sessionId: string }>
+  | Readonly<{ kind: 'created'; sessionId: string; title?: string }>
+  | Readonly<{ kind: 'resumed'; sessionId: string; title?: string }>
   | Readonly<{ kind: 'resume-failed'; record: SessionRecord }>;
 
 export class SessionLifecycle {
@@ -39,7 +39,7 @@ export class SessionLifecycle {
         resumeState: 'resumable' as const
       };
       await this.registry.upsert(updated);
-      return { kind: 'resumed', sessionId: existing.sessionId };
+      return { kind: 'resumed', sessionId: existing.sessionId, ...(existing.title === undefined ? {} : { title: existing.title }) };
     } catch {
       await this.registry.markResumeFailed(existing.sessionId);
       return { kind: 'resume-failed', record: { ...existing, resumeState: 'resume-failed' } };

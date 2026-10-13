@@ -8,11 +8,11 @@
 </head>
 <body>
   <main class="chat-layout">
-    <div id="session" class="session">No session connected.</div>
+    <div id="session" class="session">Connecting to Hermes…</div>
     <div id="messages" class="messages" role="log" aria-live="polite"></div>
     <form id="form" class="composer">
-      <textarea id="prompt" rows="4" placeholder="Ask Hermes…" aria-label="Message to Hermes"></textarea>
-      <button id="send" type="submit">Send</button>
+      <textarea id="prompt" rows="4" placeholder="Ask Hermes…" aria-label="Message to Hermes" disabled></textarea>
+      <button id="send" type="submit" disabled>Send</button>
     </form>
   </main>
   <script src="{{scriptUri}}"></script>

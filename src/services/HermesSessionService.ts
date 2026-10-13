@@ -9,9 +9,10 @@ export interface RepositoryResolver {
 }
 
 export interface AcpSessionControllerLike {
-  initialize(): Promise<Readonly<{ protocolVersion: number }>>;
+  initialize(): Promise<Readonly<{ protocolVersion: number; supportsSessionList: boolean }>>;
   createSession(cwd: string): Promise<Readonly<{ sessionId: string }>>;
   resumeSession(sessionId: string, cwd: string): Promise<Readonly<{ sessionId: string }>>;
+  getSessionInfo(sessionId: string, cwd: string): Promise<Readonly<{ sessionId: string; title?: string }> | undefined>;
   prompt(sessionId: string, text: string): Promise<void>;
   cancel(sessionId: string): Promise<void>;
 }
@@ -42,10 +43,21 @@ export class HermesSessionService {
 
     const connection = await this.controllerFactory.start(this.adapter.buildLaunchSpec(resolution.identity));
     this.activeController = connection.controller;
-    await connection.controller.initialize();
-    return new SessionLifecycle(this.registry, {
+    const initialization = await connection.controller.initialize();
+    const lifecycle = new SessionLifecycle(this.registry, {
       create: (sessionCwd) => connection.controller.createSession(sessionCwd),
       resume: (sessionId, sessionCwd) => connection.controller.resumeSession(sessionId, sessionCwd)
-    }).open(resolution.identity);
+    });
+    const result = await lifecycle.open(resolution.identity);
+    if (result.kind === 'resume-failed' || !initialization.supportsSessionList) {
+      return result;
+    }
+    const session = await connection.controller.getSessionInfo(result.sessionId, resolution.identity.cwd);
+    if (session === undefined) {
+      return result;
+    }
+    const title = session.title;
+    await this.registry.setTitle(session.sessionId, title);
+    return { ...result, ...(title === undefined ? {} : { title }) };
   }
 }

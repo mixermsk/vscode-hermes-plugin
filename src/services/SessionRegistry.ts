@@ -44,6 +44,13 @@ export class SessionRegistry {
     await this.writeRecords(records);
   }
 
+  public async setTitle(sessionId: string, title: string | undefined): Promise<void> {
+    const records = this.readRecords().map((record) =>
+      record.sessionId === sessionId ? { ...record, title } : record
+    );
+    await this.writeRecords(records);
+  }
+
   private async updateResumeState(sessionId: string, resumeState: ResumeState): Promise<void> {
     const records = this.readRecords().map((record) =>
       record.sessionId === sessionId ? { ...record, resumeState } : record

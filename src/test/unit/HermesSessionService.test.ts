@@ -23,9 +23,10 @@ suite('HermesSessionService', () => {
         launchSpec = spec;
         return {
           controller: {
-            async initialize() { return { protocolVersion: 1 }; },
+            async initialize() { return { protocolVersion: 1, supportsSessionList: false }; },
             async createSession() { return { sessionId: 'session-1' }; },
             async resumeSession() { throw new Error('not used'); },
+            async getSessionInfo() { throw new Error('not used'); },
             async prompt() { throw new Error('not used'); },
             async cancel() { throw new Error('not used'); }
           }
@@ -38,5 +39,31 @@ suite('HermesSessionService', () => {
 
     assert.deepEqual(result, { kind: 'created', sessionId: 'session-1' });
     assert.deepEqual(launchSpec, { command: 'hermes', args: ['acp'], cwd: '/work/project', environment: {} });
+  });
+
+  test('loads the persisted display title from an advertised ACP session list', async () => {
+    const resolver: RepositoryResolver = { async resolve() { return { kind: 'repository', identity: repository }; } };
+    const store = new InMemoryStore();
+    const factory: AcpControllerFactory = {
+      async start() {
+        return {
+          controller: {
+            async initialize() { return { protocolVersion: 1, supportsSessionList: true }; },
+            async createSession() { return { sessionId: 'session-1' }; },
+            async resumeSession() { throw new Error('not used'); },
+            async getSessionInfo() { return { sessionId: 'session-1', title: 'Refactor chat transport' }; },
+            async prompt() { throw new Error('not used'); },
+            async cancel() { throw new Error('not used'); }
+          }
+        };
+      }
+    };
+    const registry = new SessionRegistry(store);
+    const service = new HermesSessionService(resolver, factory, registry);
+
+    const result = await service.open('/work/project');
+
+    assert.deepEqual(result, { kind: 'created', sessionId: 'session-1', title: 'Refactor chat transport' });
+    assert.equal((await registry.getMostRecent(repository.logicalId))?.title, 'Refactor chat transport');
   });
 });

@@ -13,7 +13,14 @@
       "type": "npm",
       "script": "watch",
       "isBackground": true,
-      "problemMatcher": "$tsc-watch"
+      "problemMatcher": {
+        "owner": "webpack",
+        "pattern": [],
+        "background": {
+          "activeOnStart": true,
+          "endsPattern": "compiled successfully"
+        }
+      }
     }
   ]
 }

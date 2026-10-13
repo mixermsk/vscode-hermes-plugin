@@ -80,6 +80,19 @@ suite('SessionRegistry', () => {
     });
   });
 
+  test('stores the human-readable title separately from the session ID', async () => {
+    const registry = new SessionRegistry(new InMemoryStore());
+    await registry.upsert(sessionRecord('session-1', 'origin:example/project', '2026-10-09T10:00:00.000Z'));
+
+    await registry.setTitle('session-1', 'Refactor chat transport');
+
+    assert.equal((await registry.getMostRecent('origin:example/project'))?.title, 'Refactor chat transport');
+
+    await registry.setTitle('session-1', undefined);
+
+    assert.equal((await registry.getMostRecent('origin:example/project'))?.title, undefined);
+  });
+
   test('returns the latest record for one repository', async () => {
     const registry = new SessionRegistry(new InMemoryStore());
 

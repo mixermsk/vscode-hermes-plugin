@@ -6,16 +6,28 @@ export type AcpInitializeRequest = Readonly<{
 
 export type AcpInitializeResult = Readonly<{
   protocolVersion: number;
+  supportsSessionList: boolean;
 }>;
 
 export type AcpSessionResult = Readonly<{
   sessionId: string;
 }>;
 
+export type AcpSessionInfo = Readonly<{
+  sessionId: string;
+  title?: string;
+}>;
+
+export type AcpListSessionsResult = Readonly<{
+  sessions: readonly AcpSessionInfo[];
+  nextCursor?: string;
+}>;
+
 export interface AcpAgentTransport {
   initialize(params: AcpInitializeRequest): Promise<AcpInitializeResult>;
   newSession(params: Readonly<{ cwd: string; mcpServers: readonly [] }>): Promise<AcpSessionResult>;
   resumeSession(params: Readonly<{ sessionId: string; cwd: string; mcpServers: readonly [] }>): Promise<AcpSessionResult>;
+  listSessions(params: Readonly<{ cwd: string; cursor?: string }>): Promise<AcpListSessionsResult>;
   prompt(params: Readonly<{ sessionId: string; text: string }>): Promise<void>;
   cancel(params: Readonly<{ sessionId: string }>): Promise<void>;
   close(): void;
@@ -42,6 +54,19 @@ export class AcpSessionController {
 
   public resumeSession(sessionId: string, cwd: string): Promise<AcpSessionResult> {
     return this.transport.resumeSession({ sessionId, cwd, mcpServers: [] });
+  }
+
+  public async getSessionInfo(sessionId: string, cwd: string): Promise<AcpSessionInfo | undefined> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.transport.listSessions({ cwd, ...(cursor === undefined ? {} : { cursor }) });
+      const session = page.sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (session !== undefined) {
+        return session;
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return undefined;
   }
 
   public prompt(sessionId: string, text: string): Promise<void> {
