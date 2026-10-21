@@ -11,6 +11,8 @@ suite('ChatViewProvider', () => {
 
     assert.match(html, /class="chat-layout"/);
     assert.match(html, /id="messages"/);
+    assert.ok(html.indexOf('id="messages"') < html.indexOf('id="accept-edits"'));
+    assert.ok(html.indexOf('id="accept-edits"') < html.indexOf('id="form"'));
     assert.match(html, /id="prompt"/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
     assert.match(html, /<script src="vscode-webview:\/\/marked\.js"><\/script>/);
