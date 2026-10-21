@@ -23,7 +23,6 @@ export class SessionLifecycle {
     const existing = await this.registry.getMostRecent(repository.logicalId);
     if (existing === undefined) {
       const session = await this.starter.create(repository.cwd);
-      await this.registry.upsert(this.record(repository, session.sessionId, 'unknown', this.now()));
       return { kind: 'created', sessionId: session.sessionId };
     }
 
@@ -44,21 +43,5 @@ export class SessionLifecycle {
       await this.registry.markResumeFailed(existing.sessionId);
       return { kind: 'resume-failed', record: { ...existing, resumeState: 'resume-failed' } };
     }
-  }
-
-  private record(repository: RepositoryIdentity, sessionId: string, resumeState: SessionRecord['resumeState'], timestamp: string): SessionRecord {
-    return {
-      schemaVersion: 1,
-      agentKind: 'hermes',
-      sessionId,
-      repositoryId: repository.logicalId,
-      gitRoot: repository.gitRoot,
-      cwd: repository.cwd,
-      ...(repository.remoteOrigin === undefined ? {} : { remoteOrigin: repository.remoteOrigin }),
-      ...(repository.branch === undefined ? {} : { branchAtLastSeen: repository.branch }),
-      createdAt: timestamp,
-      lastActiveAt: timestamp,
-      resumeState
-    };
   }
 }

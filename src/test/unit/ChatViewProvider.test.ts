@@ -73,7 +73,24 @@ suite('ChatViewProvider', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
   });
 
-  test('delivers a session set before the editor panel opens', async () => {
+  test('contributes the chat as a Secondary Side Bar view', () => {
+    const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      contributes: { viewsContainers?: Record<string, unknown>; views?: Record<string, unknown> };
+    };
+
+    assert.deepEqual(manifest.contributes.viewsContainers?.secondarySidebar, [{
+      id: 'hermes-acp',
+      title: 'Hermes',
+      icon: 'resources/hermes.svg'
+    }]);
+    assert.deepEqual(manifest.contributes.views?.['hermes-acp'], [{
+      id: 'hermesAcp.chat',
+      name: 'Chat',
+      type: 'webview'
+    }]);
+  });
+
+  test('delivers a session set before the side bar view resolves', async () => {
     const provider = new ChatViewProvider({
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
@@ -83,54 +100,55 @@ suite('ChatViewProvider', () => {
     const posted: unknown[] = [];
     provider.setSession('session-1', async () => {});
 
-    const panel = {
+    const view = {
       webview: {
         cspSource: 'vscode-webview://chat',
         asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
         async postMessage(message: unknown) { posted.push(message); return true; },
         onDidReceiveMessage() { return { dispose() {} }; }
-      },
-      reveal() {},
-      onDidDispose() { return { dispose() {} }; }
+      }
     } as never;
-    provider.open(() => panel);
+    provider.resolveWebviewView(view);
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(posted, [{ type: 'restore', sessionId: 'session-1', title: undefined, messages: [] }]);
   });
 
-  test('reveals the existing editor panel instead of creating another chat', () => {
+  test('forwards a webview prompt to the connected ACP session', async () => {
     const provider = new ChatViewProvider({
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
       stylesheetUri: {} as never,
       scriptUri: {} as never
     });
-    let created = 0;
-    let revealed = 0;
-    const panel = {
+    const posted: unknown[] = [];
+    let receive: ((message: unknown) => Promise<void>) | undefined;
+    const prompts: string[] = [];
+    provider.setSession('session-1', async (text) => { prompts.push(text); });
+
+    provider.resolveWebviewView({
       webview: {
         cspSource: 'vscode-webview://chat',
         asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
-        async postMessage() { return true; },
-        onDidReceiveMessage() { return { dispose() {} }; }
-      },
-      reveal() { revealed += 1; },
-      onDidDispose() { return { dispose() {} }; }
-    } as never;
+        async postMessage(message: unknown) { posted.push(message); return true; },
+        onDidReceiveMessage(handler: (message: unknown) => Promise<void>) {
+          receive = handler;
+          return { dispose() {} };
+        }
+      }
+    } as never);
 
-    provider.open(() => {
-      created += 1;
-      return panel;
-    });
-    provider.open(() => {
-      created += 1;
-      return panel;
-    });
+    assert.ok(receive, 'expected the webview to register a prompt handler');
+    await receive({ type: 'prompt', text: 'Inspect the session' });
 
-    assert.equal(created, 1);
-    assert.equal(revealed, 1);
+    assert.deepEqual(prompts, ['Inspect the session']);
+    assert.deepEqual(posted, [
+      { type: 'restore', sessionId: 'session-1', title: undefined, messages: [] },
+      { type: 'message', role: 'user', text: 'Inspect the session' },
+      { type: 'ready' }
+    ]);
   });
+
 });
 
 function chatTemplate(): string {

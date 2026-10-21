@@ -16,9 +16,9 @@ export interface ChatViewAssets {
   scriptUri: vscode.Uri;
 }
 
-export class ChatViewProvider {
+export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hermesAcp.chat';
-  private panel: vscode.WebviewPanel | undefined;
+  private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
   private sessionId: string | undefined;
@@ -27,35 +27,29 @@ export class ChatViewProvider {
 
   public constructor(private readonly assets: ChatViewAssets) {}
 
-  public open(createPanel: () => vscode.WebviewPanel): void {
-    if (this.panel !== undefined) {
-      this.panel.reveal();
-      return;
-    }
-
-    const panel = createPanel();
-    this.panel = panel;
-    panel.webview.options = {
+  public resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = {
       enableScripts: true,
       localResourceRoots: [this.assets.mediaUri]
     };
-    panel.webview.html = this.html(panel.webview);
-    panel.webview.onDidReceiveMessage(async (message: unknown) => {
-      if (!isPromptMessage(message) || this.promptHandler === undefined) {
+    view.webview.html = this.html(view.webview);
+    view.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (!isPromptMessage(message)) {
+        return;
+      }
+      const handler = this.promptHandler;
+      if (handler === undefined) {
+        await view.webview.postMessage({ type: 'error', text: 'Hermes is not connected. Reopen the chat and try again.' });
         return;
       }
       try {
         this.appendMessage('user', message.text);
-        await this.promptHandler(message.text);
-        await panel.webview.postMessage({ type: 'ready' });
+        await handler(message.text);
+        await view.webview.postMessage({ type: 'ready' });
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
-        await panel.webview.postMessage({ type: 'error', text });
-      }
-    });
-    panel.onDidDispose(() => {
-      if (this.panel === panel) {
-        this.panel = undefined;
+        await view.webview.postMessage({ type: 'error', text });
       }
     });
     this.postState();
@@ -81,6 +75,14 @@ export class ChatViewProvider {
     this.postState();
   }
 
+  public setDisconnected(message: string): void {
+    this.sessionId = undefined;
+    this.sessionTitle = undefined;
+    this.promptHandler = undefined;
+    this.messages.length = 0;
+    void this.view?.webview.postMessage({ type: 'disconnected', text: message });
+  }
+
   public appendText(text: string): void {
     const previous = this.messages.at(-1);
     if (previous?.role === 'agent') {
@@ -88,7 +90,7 @@ export class ChatViewProvider {
     } else {
       this.messages.push({ role: 'agent', text });
     }
-    void this.panel?.webview.postMessage({ type: 'text', text });
+    void this.view?.webview.postMessage({ type: 'text', text });
   }
 
   private async connect(): Promise<void> {
@@ -99,24 +101,24 @@ export class ChatViewProvider {
       await this.connectionHandler();
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
-      await this.panel?.webview.postMessage({ type: 'error', text });
+      await this.view?.webview.postMessage({ type: 'error', text });
     }
   }
 
   private appendMessage(role: ChatMessage['role'], text: string): void {
     this.messages.push({ role, text });
-    void this.panel?.webview.postMessage({ type: 'message', role, text });
+    void this.view?.webview.postMessage({ type: 'message', role, text });
   }
 
   private postState(): void {
     if (this.sessionId === undefined) {
       return;
     }
-    void this.panel?.webview.postMessage({
+    void this.view?.webview.postMessage({
       type: 'restore',
       sessionId: this.sessionId,
       title: this.sessionTitle,
-      messages: this.messages
+      messages: this.messages.map((message) => ({ ...message }))
     });
   }
 

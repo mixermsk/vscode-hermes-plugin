@@ -64,6 +64,70 @@ suite('HermesSessionService', () => {
     const result = await service.open('/work/project');
 
     assert.deepEqual(result, { kind: 'created', sessionId: 'session-1', title: 'Refactor chat transport' });
-    assert.equal((await registry.getMostRecent(repository.logicalId))?.title, 'Refactor chat transport');
+    assert.equal(await registry.getMostRecent(repository.logicalId), undefined);
+  });
+
+  test('marks a resumed session failed when Hermes no longer lists it', async () => {
+    const resolver: RepositoryResolver = { async resolve() { return { kind: 'repository', identity: repository }; } };
+    const store = new InMemoryStore();
+    const registry = new SessionRegistry(store);
+    await registry.upsert({
+      schemaVersion: 1,
+      agentKind: 'hermes',
+      sessionId: 'stale-session',
+      repositoryId: repository.logicalId,
+      gitRoot: repository.gitRoot,
+      cwd: repository.cwd,
+      createdAt: '2026-10-20T12:00:00.000Z',
+      lastActiveAt: '2026-10-20T12:00:00.000Z',
+      resumeState: 'resumable'
+    });
+    const factory: AcpControllerFactory = {
+      async start() {
+        return {
+          controller: {
+            async initialize() { return { protocolVersion: 1, supportsSessionList: true }; },
+            async createSession() { throw new Error('not used'); },
+            async resumeSession() { return { sessionId: 'stale-session' }; },
+            async getSessionInfo() { return undefined; },
+            async prompt() { throw new Error('not used'); },
+            async cancel() { throw new Error('not used'); }
+          }
+        };
+      }
+    };
+    const service = new HermesSessionService(resolver, factory, registry);
+
+    const result = await service.open('/work/project');
+
+    assert.equal(result.kind, 'resume-failed');
+    assert.equal(result.record.sessionId, 'stale-session');
+    assert.equal((await registry.getMostRecent(repository.logicalId))?.resumeState, 'resume-failed');
+  });
+
+  test('persists a new session after its first completed prompt', async () => {
+    const resolver: RepositoryResolver = { async resolve() { return { kind: 'repository', identity: repository }; } };
+    const store = new InMemoryStore();
+    const registry = new SessionRegistry(store);
+    const factory: AcpControllerFactory = {
+      async start() {
+        return {
+          controller: {
+            async initialize() { return { protocolVersion: 1, supportsSessionList: false }; },
+            async createSession() { return { sessionId: 'session-1' }; },
+            async resumeSession() { throw new Error('not used'); },
+            async getSessionInfo() { throw new Error('not used'); },
+            async prompt() { throw new Error('not used'); },
+            async cancel() { throw new Error('not used'); }
+          }
+        };
+      }
+    };
+    const service = new HermesSessionService(resolver, factory, registry);
+
+    await service.open('/work/project');
+    await service.persistSession('session-1');
+
+    assert.equal((await registry.getMostRecent(repository.logicalId))?.sessionId, 'session-1');
   });
 });

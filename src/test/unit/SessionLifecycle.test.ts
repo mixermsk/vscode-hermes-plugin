@@ -42,7 +42,7 @@ suite('SessionLifecycle', () => {
     assert.equal((await registry.getMostRecent(repository.logicalId))?.resumeState, 'resume-failed');
   });
 
-  test('creates and records a session when the repository has no known session', async () => {
+  test('creates an unrecorded session when the repository has no known session', async () => {
     const registry = new SessionRegistry(new InMemoryStore());
     const starter: SessionStarter = {
       async create() { return { sessionId: 'new-session' }; },
@@ -53,6 +53,6 @@ suite('SessionLifecycle', () => {
     const result = await lifecycle.open(repository);
 
     assert.deepEqual(result, { kind: 'created', sessionId: 'new-session' });
-    assert.equal((await registry.getMostRecent(repository.logicalId))?.sessionId, 'new-session');
+    assert.equal(await registry.getMostRecent(repository.logicalId), undefined);
   });
 });

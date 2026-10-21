@@ -90,4 +90,10 @@ window.addEventListener('message', (event) => {
     send.disabled = false;
     prompt.focus();
   }
+  if (message.type === 'disconnected') {
+    activeAgentMessage = undefined;
+    session.textContent = `Disconnected: ${message.text}`;
+    prompt.disabled = true;
+    send.disabled = true;
+  }
 });

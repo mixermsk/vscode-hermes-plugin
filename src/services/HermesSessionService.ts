@@ -1,6 +1,6 @@
 import { HermesAgentAdapter } from '../adapters/HermesAgentAdapter';
 import type { AgentLaunchSpec } from '../adapters/AgentAdapter';
-import type { RepositoryResolution } from '../domain/RepositoryIdentity';
+import type { RepositoryIdentity, RepositoryResolution } from '../domain/RepositoryIdentity';
 import { SessionLifecycle, type SessionLifecycleResult } from './SessionLifecycle';
 import { SessionRegistry } from './SessionRegistry';
 
@@ -23,6 +23,7 @@ export interface AcpControllerFactory {
 
 export class HermesSessionService {
   private activeController: AcpSessionControllerLike | undefined;
+  private activeRepository: RepositoryIdentity | undefined;
 
   public constructor(
     private readonly repositoryResolver: RepositoryResolver,
@@ -35,11 +36,48 @@ export class HermesSessionService {
     return this.activeController;
   }
 
+  public async persistSession(sessionId: string): Promise<void> {
+    const repository = this.activeRepository;
+    if (repository === undefined) {
+      return;
+    }
+    const now = new Date().toISOString();
+    await this.registry.upsert({
+      schemaVersion: 1,
+      agentKind: 'hermes',
+      sessionId,
+      repositoryId: repository.logicalId,
+      gitRoot: repository.gitRoot,
+      cwd: repository.cwd,
+      ...(repository.remoteOrigin === undefined ? {} : { remoteOrigin: repository.remoteOrigin }),
+      ...(repository.branch === undefined ? {} : { branchAtLastSeen: repository.branch }),
+      createdAt: now,
+      lastActiveAt: now,
+      resumeState: 'resumable'
+    });
+  }
+
+  public async createNew(cwd: string): Promise<Extract<SessionLifecycleResult, { kind: 'created' }>> {
+    const resolution = await this.repositoryResolver.resolve(cwd);
+    if (resolution.kind !== 'repository') {
+      throw new Error(`Hermes ACP requires a Git repository: ${resolution.cwd}`);
+    }
+    this.activeRepository = resolution.identity;
+    if (this.activeController === undefined) {
+      const connection = await this.controllerFactory.start(this.adapter.buildLaunchSpec(resolution.identity));
+      this.activeController = connection.controller;
+      await connection.controller.initialize();
+    }
+    const session = await this.activeController.createSession(resolution.identity.cwd);
+    return { kind: 'created', sessionId: session.sessionId };
+  }
+
   public async open(cwd: string): Promise<SessionLifecycleResult> {
     const resolution = await this.repositoryResolver.resolve(cwd);
     if (resolution.kind !== 'repository') {
       throw new Error(`Hermes ACP requires a Git repository: ${resolution.cwd}`);
     }
+    this.activeRepository = resolution.identity;
 
     const connection = await this.controllerFactory.start(this.adapter.buildLaunchSpec(resolution.identity));
     this.activeController = connection.controller;
@@ -54,6 +92,14 @@ export class HermesSessionService {
     }
     const session = await connection.controller.getSessionInfo(result.sessionId, resolution.identity.cwd);
     if (session === undefined) {
+      if (result.kind === 'resumed') {
+        await this.registry.markResumeFailed(result.sessionId);
+        const record = await this.registry.getMostRecent(resolution.identity.logicalId);
+        if (record === undefined) {
+          throw new Error(`Resumed Hermes session ${result.sessionId} disappeared from the local registry.`);
+        }
+        return { kind: 'resume-failed', record };
+      }
       return result;
     }
     const title = session.title;

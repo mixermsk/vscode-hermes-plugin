@@ -58,6 +58,12 @@ export class ChildProcessAcpControllerFactory implements AcpControllerFactory {
       env: { ...processEnv(), ...spec.environment },
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    process.once('error', (error) => this.callbacks.onTransportError?.(error));
+    process.once('exit', (code, signal) => {
+      this.callbacks.onTransportError?.(new Error(
+        `Hermes ACP process exited${code === null ? '' : ` with code ${code}`}${signal === null ? '' : ` (${signal})`}.`
+      ));
+    });
     const controller = AcpConnection.connect(process, this.callbacks);
     return { controller };
   }

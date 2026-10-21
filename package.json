@@ -6,7 +6,7 @@
   "publisher": "mixermsk",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "AI",
@@ -21,6 +21,24 @@
         "title": "Hermes ACP: Open Chat"
       }
     ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "hermes-acp",
+          "title": "Hermes",
+          "icon": "resources/hermes.svg"
+        }
+      ]
+    },
+    "views": {
+      "hermes-acp": [
+        {
+          "id": "hermesAcp.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
 
     "configuration": {
       "title": "Hermes ACP",

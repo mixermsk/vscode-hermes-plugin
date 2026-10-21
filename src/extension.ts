@@ -20,6 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const permissionController = new PermissionController(new VsCodePermissionPresenter());
   const registry = new SessionRegistry(new VsCodeKeyValueStore(context.globalState));
+  let connection: Promise<void> | undefined;
   const controllerFactory = new ChildProcessAcpControllerFactory({
     onSessionUpdate: async (notification) => {
       output.appendLine(`session/update: ${notification.update.sessionUpdate}`);
@@ -32,7 +33,13 @@ export function activate(context: vscode.ExtensionContext): void {
         chatProvider.setSessionTitle(notification.sessionId, title);
       }
     },
-    onPermissionRequest: (request) => permissionController.requestPermission(request)
+    onPermissionRequest: (request) => permissionController.requestPermission(request),
+    onTransportError: (error) => {
+      const message = error.message;
+      output.appendLine(`Hermes ACP transport failed: ${message}`);
+      connection = undefined;
+      chatProvider.setDisconnected(message);
+    }
   });
   const configuration = vscode.workspace.getConfiguration('hermesAcp');
   const adapter = new HermesAgentAdapter({
@@ -46,7 +53,6 @@ export function activate(context: vscode.ExtensionContext): void {
     registry,
     adapter
   );
-  let connection: Promise<void> | undefined;
   const connect = async (): Promise<void> => {
     if (connection !== undefined) {
       return connection;
@@ -58,19 +64,31 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     try {
-      const result = await sessionService.open(workspaceFolder.uri.fsPath);
-      const message = result.kind === 'resume-failed'
-        ? `Could not resume Hermes session ${result.record.sessionId}. No new session was created.`
-        : `${result.kind === 'resumed' ? 'Resumed' : 'Created'} Hermes session ${result.sessionId}.`;
-      if (result.kind !== 'resume-failed') {
-        const controller = sessionService.controller;
-        if (controller !== undefined) {
-          chatProvider.setSession(
-            result.sessionId,
-            (text) => controller.prompt(result.sessionId, text),
-            result.kind === 'resumed' ? result.title : undefined
-          );
+      let result = await sessionService.open(workspaceFolder.uri.fsPath);
+      if (result.kind === 'resume-failed') {
+        const action = await vscode.window.showErrorMessage(
+          `Could not resume Hermes session ${result.record.sessionId}.`,
+          'Start New Session'
+        );
+        if (action !== 'Start New Session') {
+          output.appendLine(`Could not resume Hermes session ${result.record.sessionId}. No new session was created.`);
+          return;
         }
+        result = await sessionService.createNew(workspaceFolder.uri.fsPath);
+      }
+      const message = `${result.kind === 'resumed' ? 'Resumed' : 'Created'} Hermes session ${result.sessionId}.`;
+      const controller = sessionService.controller;
+      if (controller !== undefined) {
+        chatProvider.setSession(
+          result.sessionId,
+          async (text) => {
+            output.appendLine(`Sending ${text.length}-character prompt to Hermes session ${result.sessionId}.`);
+            await controller.prompt(result.sessionId, text);
+            await sessionService.persistSession(result.sessionId);
+            output.appendLine(`Hermes prompt completed for session ${result.sessionId}.`);
+          },
+          result.kind === 'resumed' ? result.title : undefined
+        );
       }
       output.appendLine(message);
       await vscode.window.showInformationMessage(message);
@@ -85,25 +103,16 @@ export function activate(context: vscode.ExtensionContext): void {
     return connection;
   };
   chatProvider.setConnectionHandler(connect);
-  const showChat = (): void => {
-    chatProvider.open(() => vscode.window.createWebviewPanel(
-      CHAT_VIEW_ID,
-      'Hermes',
-      vscode.ViewColumn.Beside,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [mediaUri]
-      }
-    ));
-  };
   const openChatCommand = vscode.commands.registerCommand('hermesAcp.openChat', async () => {
-    showChat();
+    await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
     await connect();
   });
 
   context.subscriptions.push(
     output,
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    }),
     openChatCommand
   );
 }
