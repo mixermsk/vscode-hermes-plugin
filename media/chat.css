@@ -166,6 +166,11 @@ button {
   background: var(--vscode-button-background);
 }
 
+#send.stop {
+  color: var(--vscode-inputValidation-errorForeground);
+  background: var(--vscode-inputValidation-errorBackground);
+}
+
 button:disabled {
   opacity: 0.6;
 }

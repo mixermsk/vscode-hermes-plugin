@@ -127,6 +127,14 @@ export function activate(context: vscode.ExtensionContext): void {
     return connection;
   };
   chatProvider.setConnectionHandler(connect);
+  chatProvider.setCancelHandler(async () => {
+    const controller = sessionService.controller;
+    if (controller === undefined || activeSessionId === undefined) {
+      throw new Error('Hermes is not connected. Reopen the chat and try again.');
+    }
+    output.appendLine(`Cancelling Hermes prompt for session ${activeSessionId}.`);
+    await controller.cancel(activeSessionId);
+  });
   chatProvider.setAcceptEditsHandler(async (enabled) => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (activeSessionId === undefined || workspaceFolder === undefined) {

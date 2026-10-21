@@ -8,6 +8,7 @@ const prompt = document.getElementById('prompt');
 const send = document.getElementById('send');
 let activeAgentMessage;
 let activeAgentText = '';
+let promptRunning = false;
 const toolElements = new Map();
 
 function append(role, text) {
@@ -116,6 +117,12 @@ function setAcceptEdits(enabled, disabled = false) {
   acceptEdits.disabled = disabled;
 }
 
+function setPromptRunning(running) {
+  promptRunning = running;
+  send.textContent = running ? 'Stop' : 'Send';
+  send.className = running ? 'stop' : '';
+}
+
 function restore(message) {
   messages.replaceChildren();
   activeAgentMessage = undefined;
@@ -132,24 +139,38 @@ function restore(message) {
     }
   }
   prompt.disabled = false;
+  setPromptRunning(false);
   send.disabled = false;
   prompt.focus();
 }
 
 function sendPrompt() {
   const text = prompt.value.trim();
-  if (!text || send.disabled) {
+  if (!text || promptRunning || send.disabled) {
     return;
   }
 
   prompt.value = '';
-  send.disabled = true;
+  setPromptRunning(true);
+  send.disabled = false;
   vscode.postMessage({ type: 'prompt', text });
+}
+
+function cancelPrompt() {
+  if (!promptRunning || send.disabled) {
+    return;
+  }
+  send.disabled = true;
+  vscode.postMessage({ type: 'cancel' });
 }
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
-  sendPrompt();
+  if (promptRunning) {
+    cancelPrompt();
+  } else {
+    sendPrompt();
+  }
 });
 
 prompt.addEventListener('keydown', (event) => {
@@ -190,12 +211,14 @@ window.addEventListener('message', (event) => {
     setAcceptEdits(message.enabled, false);
   }
   if (message.type === 'ready') {
+    setPromptRunning(false);
     send.disabled = false;
     prompt.focus();
   }
   if (message.type === 'error') {
     activeAgentMessage = undefined;
     append('error', `Hermes request failed: ${message.text}`);
+    setPromptRunning(false);
     send.disabled = false;
     prompt.focus();
   }
@@ -205,6 +228,7 @@ window.addEventListener('message', (event) => {
     setAcceptEdits(false, true);
     session.textContent = `Disconnected: ${message.text}`;
     prompt.disabled = true;
+    setPromptRunning(false);
     send.disabled = true;
   }
 });

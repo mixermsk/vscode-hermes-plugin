@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type * as vscode from 'vscode';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
+export type ChatCancelHandler = () => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
 export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
 export type ChatAcceptEditsHandler = (enabled: boolean) => Promise<void>;
@@ -50,12 +51,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hermesAcp.chat';
   private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
+  private cancelHandler: ChatCancelHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
   private locationHandler: ChatLocationHandler | undefined;
   private acceptEditsHandler: ChatAcceptEditsHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
   private acceptEdits = false;
+  private promptRunning = false;
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
   private activityPosted = false;
@@ -92,6 +95,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         return;
       }
+      if (isCancelMessage(message)) {
+        if (!this.promptRunning || this.cancelHandler === undefined) {
+          return;
+        }
+        try {
+          await this.cancelHandler();
+          this.setActivity('Cancelling…');
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          await view.webview.postMessage({ type: 'cancel-error', text });
+        }
+        return;
+      }
       if (!isPromptMessage(message)) {
         return;
       }
@@ -101,6 +117,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       try {
+        this.promptRunning = true;
         this.setActivity('Working…');
         this.appendMessage('user', message.text);
         await handler(message.text);
@@ -110,6 +127,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const text = error instanceof Error ? error.message : String(error);
         this.clearActivity();
         await view.webview.postMessage({ type: 'error', text });
+      } finally {
+        this.promptRunning = false;
       }
     });
     this.postState();
@@ -118,6 +137,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   public setConnectionHandler(handler: ChatConnectionHandler): void {
     this.connectionHandler = handler;
+  }
+
+  public setCancelHandler(handler: ChatCancelHandler): void {
+    this.cancelHandler = handler;
   }
 
   public setLocationHandler(handler: ChatLocationHandler): void {
@@ -154,6 +177,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
     this.acceptEdits = false;
+    this.promptRunning = false;
     this.entries.length = 0;
     this.tools.clear();
     this.clearActivity();
@@ -321,4 +345,8 @@ function isSetAcceptEditsMessage(value: unknown): value is { type: 'set-accept-e
   return typeof value === 'object' && value !== null
     && (value as { type?: unknown }).type === 'set-accept-edits'
     && typeof (value as { enabled?: unknown }).enabled === 'boolean';
+}
+
+function isCancelMessage(value: unknown): value is { type: 'cancel' } {
+  return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'cancel';
 }

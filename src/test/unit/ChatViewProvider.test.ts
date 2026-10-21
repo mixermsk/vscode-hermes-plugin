@@ -14,6 +14,7 @@ suite('ChatViewProvider', () => {
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="accept-edits"'));
     assert.ok(html.indexOf('id="accept-edits"') < html.indexOf('id="form"'));
     assert.match(html, /id="prompt"/);
+    assert.match(html, /<button id="send" type="submit" disabled>Send<\/button>/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
     assert.match(html, /<script src="vscode-webview:\/\/marked\.js"><\/script>/);
     assert.match(html, /<script src="vscode-webview:\/\/purify\.js"><\/script>/);
@@ -23,6 +24,7 @@ suite('ChatViewProvider', () => {
     assert.doesNotMatch(html, /<script>\s/);
     assert.match(styles, /\.messages\s*\{[^}]*overflow-y:\s*auto/);
     assert.match(styles, /\.composer\s*\{[^}]*flex-shrink:\s*0/);
+    assert.match(styles, /#send\.stop\s*\{[^}]*background:\s*var\(--vscode-inputValidation-errorBackground\)/);
   });
 
   test('appends streamed agent chunks to one message', () => {
@@ -145,7 +147,8 @@ suite('ChatViewProvider', () => {
 
     assert.equal(enter.defaultPrevented, true);
     assert.equal(harness.prompt.value, '');
-    assert.equal(harness.send.disabled, true);
+    assert.equal(harness.send.disabled, false);
+    assert.equal(harness.send.textContent, 'Stop');
     assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
 
     harness.prompt.disabled = false;
@@ -159,6 +162,26 @@ suite('ChatViewProvider', () => {
     assert.equal(commandEnter.defaultPrevented, false);
     assert.equal(harness.prompt.value, 'Continue editing');
     assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
+  });
+
+  test('turns Send into Stop and sends one cancellation request while a prompt is pending', () => {
+    const harness = createChatHarness(chatScript());
+    harness.prompt.disabled = false;
+    harness.send.disabled = false;
+    harness.prompt.value = 'Stop me';
+
+    harness.keydown('Enter');
+    assert.equal(harness.send.textContent, 'Stop');
+    assert.equal(harness.send.className, 'stop');
+    assert.equal(harness.send.disabled, false);
+    harness.submit();
+    harness.submit();
+
+    assert.equal(harness.send.disabled, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [
+      { type: 'prompt', text: 'Stop me' },
+      { type: 'cancel' }
+    ]);
   });
 
   test('contributes the chat as a Secondary Side Bar view', () => {
@@ -303,6 +326,7 @@ function createChatHarness(script: string): {
   send: FakeElement;
   posted: unknown[];
   keydown(key: string, modifiers?: { metaKey?: boolean; shiftKey?: boolean }): { defaultPrevented: boolean };
+  submit(): { defaultPrevented: boolean };
   receive(message: unknown): void;
 } {
   const elements = new Map<string, FakeElement>([
@@ -363,6 +387,14 @@ function createChatHarness(script: string): {
         preventDefault() { this.defaultPrevented = true; }
       };
       elements.get('prompt')!.dispatch('keydown', event);
+      return event;
+    },
+    submit() {
+      const event = {
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; }
+      };
+      elements.get('form')!.dispatch('submit', event);
       return event;
     },
     receive(message: unknown) {
