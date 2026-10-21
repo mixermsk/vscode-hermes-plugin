@@ -29,6 +29,7 @@ export interface AcpAgentTransport {
   resumeSession(params: Readonly<{ sessionId: string; cwd: string; mcpServers: readonly [] }>): Promise<AcpSessionResult>;
   listSessions(params: Readonly<{ cwd: string; cursor?: string }>): Promise<AcpListSessionsResult>;
   prompt(params: Readonly<{ sessionId: string; text: string }>): Promise<void>;
+
   cancel(params: Readonly<{ sessionId: string }>): Promise<void>;
   close(): void;
 }
@@ -72,6 +73,7 @@ export class AcpSessionController {
   public prompt(sessionId: string, text: string): Promise<void> {
     return this.transport.prompt({ sessionId, text });
   }
+
 
   public cancel(sessionId: string): Promise<void> {
     return this.transport.cancel({ sessionId });

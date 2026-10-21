@@ -38,7 +38,11 @@ export class SessionLifecycle {
         resumeState: 'resumable' as const
       };
       await this.registry.upsert(updated);
-      return { kind: 'resumed', sessionId: existing.sessionId, ...(existing.title === undefined ? {} : { title: existing.title }) };
+      return {
+        kind: 'resumed',
+        sessionId: existing.sessionId,
+        ...(existing.title === undefined ? {} : { title: existing.title })
+      };
     } catch {
       await this.registry.markResumeFailed(existing.sessionId);
       return { kind: 'resume-failed', record: { ...existing, resumeState: 'resume-failed' } };

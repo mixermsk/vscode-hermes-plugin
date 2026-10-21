@@ -14,6 +14,7 @@ export interface AcpSessionControllerLike {
   resumeSession(sessionId: string, cwd: string): Promise<Readonly<{ sessionId: string }>>;
   getSessionInfo(sessionId: string, cwd: string): Promise<Readonly<{ sessionId: string; title?: string }> | undefined>;
   prompt(sessionId: string, text: string): Promise<void>;
+
   cancel(sessionId: string): Promise<void>;
 }
 

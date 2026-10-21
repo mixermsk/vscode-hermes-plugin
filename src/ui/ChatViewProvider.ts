@@ -4,6 +4,7 @@ import type * as vscode from 'vscode';
 export type ChatPromptHandler = (text: string) => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
 export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
+export type ChatAcceptEditsHandler = (enabled: boolean) => Promise<void>;
 
 export interface ChatMessage {
   role: 'user' | 'agent' | 'error';
@@ -51,8 +52,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private promptHandler: ChatPromptHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
   private locationHandler: ChatLocationHandler | undefined;
+  private acceptEditsHandler: ChatAcceptEditsHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
+  private acceptEdits = false;
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
   private activityPosted = false;
@@ -71,6 +74,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage(async (message: unknown) => {
       if (isOpenLocationMessage(message)) {
         await this.locationHandler?.(message);
+        return;
+      }
+      if (isSetAcceptEditsMessage(message)) {
+        const handler = this.acceptEditsHandler;
+        if (handler === undefined) {
+          await view.webview.postMessage({ type: 'accept-edits', enabled: this.acceptEdits });
+          return;
+        }
+        try {
+          await handler(message.enabled);
+          this.setAcceptEdits(message.enabled);
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          await view.webview.postMessage({ type: 'error', text });
+          await view.webview.postMessage({ type: 'accept-edits', enabled: this.acceptEdits });
+        }
         return;
       }
       if (!isPromptMessage(message)) {
@@ -105,11 +124,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.locationHandler = handler;
   }
 
-  public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
+  public setAcceptEditsHandler(handler: ChatAcceptEditsHandler): void {
+    this.acceptEditsHandler = handler;
+  }
+
+  public setSession(sessionId: string, handler: ChatPromptHandler, title?: string, acceptEdits = false): void {
     this.sessionId = sessionId;
     this.sessionTitle = title;
     this.promptHandler = handler;
+    this.acceptEdits = acceptEdits;
     this.postState();
+  }
+
+  public setAcceptEdits(enabled: boolean): void {
+    this.acceptEdits = enabled;
+    void this.view?.webview.postMessage({ type: 'accept-edits', enabled });
   }
 
   public setSessionTitle(sessionId: string, title: string | undefined): void {
@@ -124,6 +153,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionId = undefined;
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
+    this.acceptEdits = false;
     this.entries.length = 0;
     this.tools.clear();
     this.clearActivity();
@@ -228,6 +258,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'restore',
       sessionId: this.sessionId,
       title: this.sessionTitle,
+      acceptEdits: this.acceptEdits,
       entries: this.entries.map((entry) => isChatMessage(entry) ? { ...entry } : cloneTool(entry))
     });
     this.postActivity();
@@ -284,4 +315,10 @@ function isOpenLocationMessage(value: unknown): value is ChatToolLocation & { ty
     && (value as { type?: unknown }).type === 'open-location'
     && typeof (value as { path?: unknown }).path === 'string'
     && ((value as { line?: unknown }).line === undefined || typeof (value as { line?: unknown }).line === 'number');
+}
+
+function isSetAcceptEditsMessage(value: unknown): value is { type: 'set-accept-edits'; enabled: boolean } {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'set-accept-edits'
+    && typeof (value as { enabled?: unknown }).enabled === 'boolean';
 }

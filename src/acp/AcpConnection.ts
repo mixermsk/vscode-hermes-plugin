@@ -84,6 +84,7 @@ export class AcpConnection implements AcpAgentTransport {
     });
   }
 
+
   public async cancel(params: Readonly<{ sessionId: string }>): Promise<void> {
     await this.agent.notify(acp.methods.agent.session.cancel, { sessionId: params.sessionId });
   }

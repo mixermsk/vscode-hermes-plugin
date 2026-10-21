@@ -54,6 +54,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: 'Refactor chat transport',
+      acceptEdits: false,
       entries: [
         { role: 'user', text: 'Hello' },
         { role: 'agent', text: 'Hi there' }
@@ -61,6 +62,7 @@ suite('ChatViewProvider', () => {
     });
 
     assert.equal(harness.session.textContent, 'Session: Refactor chat transport (session-1)');
+    assert.equal(harness.acceptEdits.checked, false);
     assert.equal(harness.prompt.disabled, false);
     assert.equal(harness.send.disabled, false);
     assert.deepEqual(
@@ -79,6 +81,24 @@ suite('ChatViewProvider', () => {
 
     assert.equal(harness.activity.hidden, false);
     assert.equal(harness.activity.textContent, 'Running: Read ChatViewProvider.ts');
+  });
+
+  test('restores and changes the Accept Edits toggle', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({ type: 'restore', sessionId: 'session-1', acceptEdits: true, entries: [] });
+    assert.equal(harness.acceptEdits.checked, true);
+    assert.equal(harness.acceptEdits.disabled, false);
+
+    harness.acceptEdits.checked = false;
+    harness.acceptEdits.dispatch('change', {});
+
+    assert.equal(harness.acceptEdits.disabled, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'set-accept-edits', enabled: false }]);
+
+    harness.receive({ type: 'accept-edits', enabled: false });
+    assert.equal(harness.acceptEdits.checked, false);
+    assert.equal(harness.acceptEdits.disabled, false);
   });
 
   test('renders a collapsible tool card and updates its status', () => {
@@ -113,17 +133,29 @@ suite('ChatViewProvider', () => {
     assert.match(harness.messages.children[0].textContent, /--- \/work\/src\/ui\/ChatViewProvider\.ts/);
   });
 
-  test('sends the prompt with Command+Enter', () => {
+  test('sends the prompt with Enter but leaves Shift+Enter and Command+Enter to the textarea', () => {
     const harness = createChatHarness(chatScript());
     harness.prompt.disabled = false;
     harness.send.disabled = false;
     harness.prompt.value = 'Ship this change';
 
-    const event = harness.keydown('Enter', true);
+    const enter = harness.keydown('Enter');
 
-    assert.equal(event.defaultPrevented, true);
+    assert.equal(enter.defaultPrevented, true);
     assert.equal(harness.prompt.value, '');
     assert.equal(harness.send.disabled, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
+
+    harness.prompt.disabled = false;
+    harness.send.disabled = false;
+    harness.prompt.value = 'Continue editing';
+
+    const shiftEnter = harness.keydown('Enter', { shiftKey: true });
+    const commandEnter = harness.keydown('Enter', { metaKey: true });
+
+    assert.equal(shiftEnter.defaultPrevented, false);
+    assert.equal(commandEnter.defaultPrevented, false);
+    assert.equal(harness.prompt.value, 'Continue editing');
     assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
   });
 
@@ -178,6 +210,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: undefined,
+      acceptEdits: false,
       entries: [
         { role: 'user', text: 'Earlier prompt' },
         {
@@ -221,7 +254,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, entries: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, acceptEdits: false, entries: [] },
       { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
       { type: 'activity', text: undefined },
@@ -261,16 +294,18 @@ function webviewResources(): {
 
 function createChatHarness(script: string): {
   session: FakeElement;
+  acceptEdits: FakeElement;
   activity: FakeElement;
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
   posted: unknown[];
-  keydown(key: string, metaKey: boolean): { defaultPrevented: boolean };
+  keydown(key: string, modifiers?: { metaKey?: boolean; shiftKey?: boolean }): { defaultPrevented: boolean };
   receive(message: unknown): void;
 } {
   const elements = new Map<string, FakeElement>([
     ['session', new FakeElement()],
+    ['accept-edits', new FakeElement()],
     ['activity', new FakeElement()],
     ['messages', new FakeElement()],
     ['form', new FakeElement()],
@@ -311,13 +346,20 @@ function createChatHarness(script: string): {
 
   return {
     session: elements.get('session')!,
+    acceptEdits: elements.get('accept-edits')!,
     activity: elements.get('activity')!,
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,
     posted,
-    keydown(key: string, metaKey: boolean) {
-      const event = { key, metaKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    keydown(key: string, modifiers = {}) {
+      const event = {
+        key,
+        metaKey: modifiers.metaKey ?? false,
+        shiftKey: modifiers.shiftKey ?? false,
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; }
+      };
       elements.get('prompt')!.dispatch('keydown', event);
       return event;
     },
@@ -334,6 +376,7 @@ class FakeElement {
   public textContent = '';
   private html = '';
   public value = '';
+  public checked = false;
   public disabled = false;
   public hidden = false;
   public scrollTop = 0;

@@ -1,5 +1,6 @@
 const vscode = acquireVsCodeApi();
 const session = document.getElementById('session');
+const acceptEdits = document.getElementById('accept-edits');
 const activity = document.getElementById('activity');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
@@ -110,12 +111,18 @@ function setActivity(text) {
   activity.textContent = text ?? '';
 }
 
+function setAcceptEdits(enabled, disabled = false) {
+  acceptEdits.checked = enabled;
+  acceptEdits.disabled = disabled;
+}
+
 function restore(message) {
   messages.replaceChildren();
   activeAgentMessage = undefined;
   activeAgentText = '';
   toolElements.clear();
   setActivity();
+  setAcceptEdits(message.acceptEdits, false);
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.entries) {
     if (entry.toolCallId) {
@@ -154,6 +161,11 @@ prompt.addEventListener('keydown', (event) => {
   sendPrompt();
 });
 
+acceptEdits.addEventListener('change', () => {
+  acceptEdits.disabled = true;
+  vscode.postMessage({ type: 'set-accept-edits', enabled: acceptEdits.checked });
+});
+
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (message.type === 'restore') {
@@ -174,6 +186,9 @@ window.addEventListener('message', (event) => {
   if (message.type === 'activity') {
     setActivity(message.text);
   }
+  if (message.type === 'accept-edits') {
+    setAcceptEdits(message.enabled, false);
+  }
   if (message.type === 'ready') {
     send.disabled = false;
     prompt.focus();
@@ -187,6 +202,7 @@ window.addEventListener('message', (event) => {
   if (message.type === 'disconnected') {
     activeAgentMessage = undefined;
     setActivity();
+    setAcceptEdits(false, true);
     session.textContent = `Disconnected: ${message.text}`;
     prompt.disabled = true;
     send.disabled = true;

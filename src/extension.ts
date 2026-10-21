@@ -28,6 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const permissionController = new PermissionController(new VsCodePermissionPresenter());
   const registry = new SessionRegistry(new VsCodeKeyValueStore(context.globalState));
   let connection: Promise<void> | undefined;
+  let activeSessionId: string | undefined;
   const controllerFactory = new ChildProcessAcpControllerFactory({
     onSessionUpdate: async (notification) => {
       output.appendLine(`session/update: ${notification.update.sessionUpdate}`);
@@ -51,12 +52,15 @@ export function activate(context: vscode.ExtensionContext): void {
         await registry.setTitle(notification.sessionId, title);
         chatProvider.setSessionTitle(notification.sessionId, title);
       }
+
     },
     onPermissionRequest: (request) => permissionController.requestPermission(request),
     onTransportError: (error) => {
       const message = error.message;
       output.appendLine(`Hermes ACP transport failed: ${message}`);
       connection = undefined;
+      activeSessionId = undefined;
+      permissionController.setWorkspaceEditAutoApproval(undefined);
       chatProvider.setDisconnected(message);
     }
   });
@@ -98,6 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const message = `${result.kind === 'resumed' ? 'Resumed' : 'Created'} Hermes session ${result.sessionId}.`;
       const controller = sessionService.controller;
       if (controller !== undefined) {
+        activeSessionId = result.sessionId;
         chatProvider.setSession(
           result.sessionId,
           async (text) => {
@@ -122,6 +127,13 @@ export function activate(context: vscode.ExtensionContext): void {
     return connection;
   };
   chatProvider.setConnectionHandler(connect);
+  chatProvider.setAcceptEditsHandler(async (enabled) => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (activeSessionId === undefined || workspaceFolder === undefined) {
+      throw new Error('Hermes is not connected. Reopen the chat and try again.');
+    }
+    permissionController.setWorkspaceEditAutoApproval(enabled ? workspaceFolder.uri.fsPath : undefined);
+  });
   const openChatCommand = vscode.commands.registerCommand('hermesAcp.openChat', async () => {
     await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
     await connect();
