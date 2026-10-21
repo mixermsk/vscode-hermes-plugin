@@ -59,7 +59,21 @@ suite('ChatViewProvider', () => {
     );
   });
 
-  test('delivers a session set before the webview resolves', async () => {
+  test('sends the prompt with Command+Enter', () => {
+    const harness = createChatHarness(chatScript());
+    harness.prompt.disabled = false;
+    harness.send.disabled = false;
+    harness.prompt.value = 'Ship this change';
+
+    const event = harness.keydown('Enter', true);
+
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(harness.prompt.value, '');
+    assert.equal(harness.send.disabled, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'prompt', text: 'Ship this change' }]);
+  });
+
+  test('delivers a session set before the editor panel opens', async () => {
     const provider = new ChatViewProvider({
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
@@ -69,17 +83,53 @@ suite('ChatViewProvider', () => {
     const posted: unknown[] = [];
     provider.setSession('session-1', async () => {});
 
-    provider.resolveWebviewView({
+    const panel = {
       webview: {
         cspSource: 'vscode-webview://chat',
         asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
         async postMessage(message: unknown) { posted.push(message); return true; },
         onDidReceiveMessage() { return { dispose() {} }; }
-      }
-    } as never);
+      },
+      reveal() {},
+      onDidDispose() { return { dispose() {} }; }
+    } as never;
+    provider.open(() => panel);
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(posted, [{ type: 'restore', sessionId: 'session-1', title: undefined, messages: [] }]);
+  });
+
+  test('reveals the existing editor panel instead of creating another chat', () => {
+    const provider = new ChatViewProvider({
+      mediaUri: {} as never,
+      templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
+      stylesheetUri: {} as never,
+      scriptUri: {} as never
+    });
+    let created = 0;
+    let revealed = 0;
+    const panel = {
+      webview: {
+        cspSource: 'vscode-webview://chat',
+        asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
+        async postMessage() { return true; },
+        onDidReceiveMessage() { return { dispose() {} }; }
+      },
+      reveal() { revealed += 1; },
+      onDidDispose() { return { dispose() {} }; }
+    } as never;
+
+    provider.open(() => {
+      created += 1;
+      return panel;
+    });
+    provider.open(() => {
+      created += 1;
+      return panel;
+    });
+
+    assert.equal(created, 1);
+    assert.equal(revealed, 1);
   });
 });
 
@@ -108,6 +158,8 @@ function createChatHarness(script: string): {
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
+  posted: unknown[];
+  keydown(key: string, metaKey: boolean): { defaultPrevented: boolean };
   receive(message: unknown): void;
 } {
   const elements = new Map<string, FakeElement>([
@@ -119,9 +171,10 @@ function createChatHarness(script: string): {
   ]);
   elements.get('prompt')!.disabled = true;
   elements.get('send')!.disabled = true;
+  const posted: unknown[] = [];
   let messageListener: ((event: { data: unknown }) => void) | undefined;
   vm.runInNewContext(script, {
-    acquireVsCodeApi: () => ({ postMessage() {} }),
+    acquireVsCodeApi: () => ({ postMessage(message: unknown) { posted.push(message); } }),
     document: {
       getElementById(id: string) {
         return elements.get(id);
@@ -144,6 +197,12 @@ function createChatHarness(script: string): {
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,
+    posted,
+    keydown(key: string, metaKey: boolean) {
+      const event = { key, metaKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+      elements.get('prompt')!.dispatch('keydown', event);
+      return event;
+    },
     receive(message: unknown) {
       assert.ok(messageListener, 'expected the webview to register a message listener');
       messageListener({ data: message });
@@ -159,6 +218,7 @@ class FakeElement {
   public disabled = false;
   public scrollTop = 0;
   public scrollHeight = 0;
+  private readonly listeners = new Map<string, (event: unknown) => void>();
 
   public appendChild(child: FakeElement): void {
     this.children.push(child);
@@ -170,7 +230,13 @@ class FakeElement {
     this.scrollHeight = 0;
   }
 
-  public addEventListener(): void {}
+  public addEventListener(type: string, listener: (event: unknown) => void): void {
+    this.listeners.set(type, listener);
+  }
+
+  public dispatch(type: string, event: unknown): void {
+    this.listeners.get(type)?.(event);
+  }
 
   public focus(): void {}
 }

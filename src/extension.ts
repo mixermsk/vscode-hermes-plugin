@@ -85,17 +85,25 @@ export function activate(context: vscode.ExtensionContext): void {
     return connection;
   };
   chatProvider.setConnectionHandler(connect);
+  const showChat = (): void => {
+    chatProvider.open(() => vscode.window.createWebviewPanel(
+      CHAT_VIEW_ID,
+      'Hermes',
+      vscode.ViewColumn.Beside,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [mediaUri]
+      }
+    ));
+  };
   const openChatCommand = vscode.commands.registerCommand('hermesAcp.openChat', async () => {
-    await vscode.commands.executeCommand('workbench.view.extension.hermes-acp');
-    await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
+    showChat();
     await connect();
   });
 
   context.subscriptions.push(
     output,
-    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
-      webviewOptions: { retainContextWhenHidden: true }
-    }),
     openChatCommand
   );
 }

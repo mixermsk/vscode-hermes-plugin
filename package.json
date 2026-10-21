@@ -21,24 +21,7 @@
         "title": "Hermes ACP: Open Chat"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "hermes-acp",
-          "title": "Hermes",
-          "icon": "resources/hermes.svg"
-        }
-      ]
-    },
-    "views": {
-      "hermes-acp": [
-        {
-          "id": "hermesAcp.chat",
-          "name": "Chat",
-          "type": "webview"
-        }
-      ]
-    },
+
     "configuration": {
       "title": "Hermes ACP",
       "properties": {

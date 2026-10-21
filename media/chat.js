@@ -44,8 +44,7 @@ function restore(message) {
   prompt.focus();
 }
 
-form.addEventListener('submit', (event) => {
-  event.preventDefault();
+function sendPrompt() {
   const text = prompt.value.trim();
   if (!text || send.disabled) {
     return;
@@ -54,6 +53,20 @@ form.addEventListener('submit', (event) => {
   prompt.value = '';
   send.disabled = true;
   vscode.postMessage({ type: 'prompt', text });
+}
+
+form.addEventListener('submit', (event) => {
+  event.preventDefault();
+  sendPrompt();
+});
+
+prompt.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || !event.metaKey) {
+    return;
+  }
+
+  event.preventDefault();
+  sendPrompt();
 });
 
 window.addEventListener('message', (event) => {

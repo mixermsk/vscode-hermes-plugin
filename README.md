@@ -4,7 +4,7 @@ A standalone VS Code extension that will connect [Hermes Agent](https://hermes-a
 
 ## Current status
 
-The initial scaffold contributes a **Hermes** sidebar and the `Hermes ACP: Open Chat` command. It does not yet launch Hermes or create ACP sessions.
+The extension opens a **Hermes** editor tab beside the active editor through the `Hermes ACP: Open Chat` command. It launches Hermes and creates or resumes ACP sessions for the opened repository.
 
 ## Development
 
