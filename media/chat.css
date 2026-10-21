@@ -27,6 +27,22 @@ body {
   white-space: nowrap;
 }
 
+.activity {
+  overflow: hidden;
+  padding-left: 2px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity::before {
+  content: "●";
+  margin-right: 6px;
+  color: var(--vscode-progressBar-background);
+}
+
 .messages {
   display: flex;
   flex: 1;

@@ -1,5 +1,6 @@
 const vscode = acquireVsCodeApi();
 const session = document.getElementById('session');
+const activity = document.getElementById('activity');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
@@ -32,9 +33,15 @@ function appendMessage(role, text) {
   append(role, text);
 }
 
+function setActivity(text) {
+  activity.hidden = !text;
+  activity.textContent = text ?? '';
+}
+
 function restore(message) {
   messages.replaceChildren();
   activeAgentMessage = undefined;
+  setActivity();
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.messages) {
     appendMessage(entry.role, entry.text);
@@ -80,6 +87,9 @@ window.addEventListener('message', (event) => {
   if (message.type === 'text') {
     appendAgentText(message.text);
   }
+  if (message.type === 'activity') {
+    setActivity(message.text);
+  }
   if (message.type === 'ready') {
     send.disabled = false;
     prompt.focus();
@@ -92,6 +102,7 @@ window.addEventListener('message', (event) => {
   }
   if (message.type === 'disconnected') {
     activeAgentMessage = undefined;
+    setActivity();
     session.textContent = `Disconnected: ${message.text}`;
     prompt.disabled = true;
     send.disabled = true;

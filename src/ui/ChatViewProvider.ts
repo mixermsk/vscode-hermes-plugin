@@ -24,6 +24,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
   private readonly messages: ChatMessage[] = [];
+  private activity: string | undefined;
+  private activityPosted = false;
+  private readonly activeTools = new Map<string, string>();
 
   public constructor(private readonly assets: ChatViewAssets) {}
 
@@ -44,11 +47,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       try {
+        this.setActivity('Working…');
         this.appendMessage('user', message.text);
         await handler(message.text);
+        this.clearActivity();
         await view.webview.postMessage({ type: 'ready' });
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
+        this.clearActivity();
         await view.webview.postMessage({ type: 'error', text });
       }
     });
@@ -80,7 +86,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
     this.messages.length = 0;
+    this.clearActivity();
     void this.view?.webview.postMessage({ type: 'disconnected', text: message });
+  }
+
+  public setThinking(): void {
+    this.activity = 'Thinking…';
+    this.postActivity();
+  }
+
+  public startTool(toolCallId: string, title: string): void {
+    this.activeTools.set(toolCallId, title);
+    this.postActivity();
+  }
+
+  public updateTool(toolCallId: string, status: string | null | undefined, title: string | null | undefined): void {
+    if (title !== undefined && title !== null) {
+      this.activeTools.set(toolCallId, title);
+    }
+    if (status === 'completed' || status === 'failed') {
+      this.activeTools.delete(toolCallId);
+    }
+    this.postActivity();
   }
 
   public appendText(text: string): void {
@@ -110,6 +137,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.view?.webview.postMessage({ type: 'message', role, text });
   }
 
+  private setActivity(text: string): void {
+    this.activity = text;
+    this.postActivity();
+  }
+
+  private clearActivity(): void {
+    this.activity = undefined;
+    this.activeTools.clear();
+    this.postActivity();
+  }
+
+  private postActivity(): void {
+    const tools = [...this.activeTools.values()];
+    const text = tools.length === 0
+      ? this.activity
+      : `Running: ${tools[0]}${tools.length === 1 ? '' : ` (+${tools.length - 1})`}`;
+    if (text === undefined && !this.activityPosted) {
+      return;
+    }
+    this.activityPosted = text !== undefined;
+    void this.view?.webview.postMessage({ type: 'activity', text });
+  }
+
   private postState(): void {
     if (this.sessionId === undefined) {
       return;
@@ -120,6 +170,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       title: this.sessionTitle,
       messages: this.messages.map((message) => ({ ...message }))
     });
+    this.postActivity();
   }
 
   private html(webview: vscode.Webview): string {

@@ -27,6 +27,15 @@ export function activate(context: vscode.ExtensionContext): void {
       if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
         chatProvider.appendText(notification.update.content.text);
       }
+      if (notification.update.sessionUpdate === 'agent_thought_chunk') {
+        chatProvider.setThinking();
+      }
+      if (notification.update.sessionUpdate === 'tool_call') {
+        chatProvider.startTool(notification.update.toolCallId, notification.update.title);
+      }
+      if (notification.update.sessionUpdate === 'tool_call_update') {
+        chatProvider.updateTool(notification.update.toolCallId, notification.update.status, notification.update.title);
+      }
       if (notification.update.sessionUpdate === 'session_info_update' && notification.update.title !== undefined) {
         const title = notification.update.title ?? undefined;
         await registry.setTitle(notification.sessionId, title);

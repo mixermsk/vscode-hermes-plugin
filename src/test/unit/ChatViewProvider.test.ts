@@ -59,6 +59,15 @@ suite('ChatViewProvider', () => {
     );
   });
 
+  test('renders the agent activity while a prompt is running', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({ type: 'activity', text: 'Running: Read ChatViewProvider.ts' });
+
+    assert.equal(harness.activity.hidden, false);
+    assert.equal(harness.activity.textContent, 'Running: Read ChatViewProvider.ts');
+  });
+
   test('sends the prompt with Command+Enter', () => {
     const harness = createChatHarness(chatScript());
     harness.prompt.disabled = false;
@@ -144,7 +153,9 @@ suite('ChatViewProvider', () => {
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
       { type: 'restore', sessionId: 'session-1', title: undefined, messages: [] },
+      { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
+      { type: 'activity', text: undefined },
       { type: 'ready' }
     ]);
   });
@@ -173,6 +184,7 @@ function webviewResources(): { cspSource: string; stylesheetUri: string; scriptU
 
 function createChatHarness(script: string): {
   session: FakeElement;
+  activity: FakeElement;
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
@@ -182,6 +194,7 @@ function createChatHarness(script: string): {
 } {
   const elements = new Map<string, FakeElement>([
     ['session', new FakeElement()],
+    ['activity', new FakeElement()],
     ['messages', new FakeElement()],
     ['form', new FakeElement()],
     ['prompt', new FakeElement()],
@@ -212,6 +225,7 @@ function createChatHarness(script: string): {
 
   return {
     session: elements.get('session')!,
+    activity: elements.get('activity')!,
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,
@@ -234,6 +248,7 @@ class FakeElement {
   public textContent = '';
   public value = '';
   public disabled = false;
+  public hidden = false;
   public scrollTop = 0;
   public scrollHeight = 0;
   private readonly listeners = new Map<string, (event: unknown) => void>();
