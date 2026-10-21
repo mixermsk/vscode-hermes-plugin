@@ -72,6 +72,59 @@ body {
   background: var(--vscode-inputValidation-errorBackground);
 }
 
+.tool {
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 5px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.tool-summary {
+  padding: 7px 9px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.tool-summary.completed {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.tool-summary.failed {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 9px 9px;
+}
+
+.tool-metadata {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.tool-content {
+  max-height: 220px;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  color: var(--vscode-editor-foreground);
+  background: var(--vscode-textCodeBlock-background);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.tool-location {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  border: 0;
+  background: none;
+  text-decoration: underline;
+}
+
 .composer {
   display: flex;
   flex-direction: column;

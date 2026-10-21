@@ -54,7 +54,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: 'Refactor chat transport',
-      messages: [
+      entries: [
         { role: 'user', text: 'Hello' },
         { role: 'agent', text: 'Hi there' }
       ]
@@ -79,6 +79,38 @@ suite('ChatViewProvider', () => {
 
     assert.equal(harness.activity.hidden, false);
     assert.equal(harness.activity.textContent, 'Running: Read ChatViewProvider.ts');
+  });
+
+  test('renders a collapsible tool card and updates its status', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({
+      type: 'tool',
+      tool: {
+        toolCallId: 'tool-1',
+        title: 'Read src/ui/ChatViewProvider.ts',
+        kind: 'read',
+        status: 'in_progress',
+        content: [{ type: 'text', text: 'src/ui/ChatViewProvider.ts' }],
+        locations: [{ path: '/work/src/ui/ChatViewProvider.ts', line: 100 }]
+      }
+    });
+    harness.receive({
+      type: 'tool-update',
+      tool: {
+        toolCallId: 'tool-1',
+        title: 'Read src/ui/ChatViewProvider.ts',
+        kind: 'read',
+        status: 'completed',
+        content: [{ type: 'diff', path: '/work/src/ui/ChatViewProvider.ts', oldText: 'old', newText: 'new' }],
+        locations: [{ path: '/work/src/ui/ChatViewProvider.ts', line: 100 }]
+      }
+    });
+
+    assert.equal(harness.messages.children.length, 1);
+    assert.equal(harness.messages.children[0].className, 'tool');
+    assert.match(harness.messages.children[0].textContent, /completed/);
+    assert.match(harness.messages.children[0].textContent, /--- \/work\/src\/ui\/ChatViewProvider\.ts/);
   });
 
   test('sends the prompt with Command+Enter', () => {
@@ -124,6 +156,12 @@ suite('ChatViewProvider', () => {
     const posted: unknown[] = [];
     provider.setSession('session-1', async () => {});
     provider.appendUserText('Earlier prompt');
+    provider.startTool({
+      toolCallId: 'tool-1',
+      title: 'Read README.md',
+      status: 'completed',
+      content: [{ type: 'text', text: 'README.md' }]
+    });
 
     const view = {
       webview: {
@@ -140,7 +178,15 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: undefined,
-      messages: [{ role: 'user', text: 'Earlier prompt' }]
+      entries: [
+        { role: 'user', text: 'Earlier prompt' },
+        {
+          toolCallId: 'tool-1',
+          title: 'Read README.md',
+          status: 'completed',
+          content: [{ type: 'text', text: 'README.md' }]
+        }
+      ]
     }]);
   });
 
@@ -175,7 +221,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, messages: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, entries: [] },
       { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
       { type: 'activity', text: undefined },
@@ -296,11 +342,13 @@ class FakeElement {
 
   public appendChild(child: FakeElement): void {
     this.children.push(child);
+    this.textContent += child.textContent;
     this.scrollHeight = this.children.length;
   }
 
   public replaceChildren(): void {
     this.children.length = 0;
+    this.textContent = '';
     this.scrollHeight = 0;
   }
 

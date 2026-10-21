@@ -3,11 +3,38 @@ import type * as vscode from 'vscode';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
+export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
 
 export interface ChatMessage {
   role: 'user' | 'agent' | 'error';
   text: string;
 }
+
+export interface ChatToolContent {
+  type: 'text' | 'diff' | 'terminal';
+  text?: string;
+  path?: string;
+  oldText?: string;
+  newText?: string;
+  terminalId?: string;
+}
+
+export interface ChatToolLocation {
+  path: string;
+  line?: number;
+}
+
+export interface ChatTool {
+  toolCallId: string;
+  title: string;
+  name?: string;
+  kind?: string;
+  status?: string;
+  content?: readonly ChatToolContent[];
+  locations?: readonly ChatToolLocation[];
+}
+
+export type ChatTranscriptEntry = ChatMessage | ChatTool;
 
 export interface ChatViewAssets {
   mediaUri: vscode.Uri;
@@ -23,12 +50,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
+  private locationHandler: ChatLocationHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
-  private readonly messages: ChatMessage[] = [];
+  private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
   private activityPosted = false;
   private readonly activeTools = new Map<string, string>();
+  private readonly tools = new Map<string, ChatTool>();
 
   public constructor(private readonly assets: ChatViewAssets) {}
 
@@ -40,6 +69,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.html(view.webview);
     view.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (isOpenLocationMessage(message)) {
+        await this.locationHandler?.(message);
+        return;
+      }
       if (!isPromptMessage(message)) {
         return;
       }
@@ -68,6 +101,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.connectionHandler = handler;
   }
 
+  public setLocationHandler(handler: ChatLocationHandler): void {
+    this.locationHandler = handler;
+  }
+
   public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
     this.sessionId = sessionId;
     this.sessionTitle = title;
@@ -87,7 +124,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionId = undefined;
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
-    this.messages.length = 0;
+    this.entries.length = 0;
+    this.tools.clear();
     this.clearActivity();
     void this.view?.webview.postMessage({ type: 'disconnected', text: message });
   }
@@ -97,38 +135,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postActivity();
   }
 
-  public startTool(toolCallId: string, title: string): void {
-    this.activeTools.set(toolCallId, title);
+  public startTool(tool: ChatTool): void {
+    this.tools.set(tool.toolCallId, tool);
+    this.entries.push(tool);
+    if (tool.status === 'completed' || tool.status === 'failed') {
+      this.activeTools.delete(tool.toolCallId);
+    } else {
+      this.activeTools.set(tool.toolCallId, tool.title);
+    }
     this.postActivity();
+    void this.view?.webview.postMessage({ type: 'tool', tool: cloneTool(tool) });
   }
 
-  public updateTool(toolCallId: string, status: string | null | undefined, title: string | null | undefined): void {
-    if (title !== undefined && title !== null) {
-      this.activeTools.set(toolCallId, title);
+  public updateTool(toolCallId: string, update: Partial<ChatTool>): void {
+    const tool = this.tools.get(toolCallId);
+    if (tool === undefined) {
+      return;
     }
-    if (status === 'completed' || status === 'failed') {
+    Object.assign(tool, update);
+    this.activeTools.set(toolCallId, tool.title);
+    if (tool.status === 'completed' || tool.status === 'failed') {
       this.activeTools.delete(toolCallId);
     }
     this.postActivity();
+    void this.view?.webview.postMessage({ type: 'tool-update', tool: cloneTool(tool) });
   }
 
   public appendText(text: string): void {
-    const previous = this.messages.at(-1);
-    if (previous?.role === 'agent') {
+    const previous = this.entries.at(-1);
+    if (isChatMessage(previous) && previous.role === 'agent') {
       previous.text += text;
     } else {
-      this.messages.push({ role: 'agent', text });
+      this.entries.push({ role: 'agent', text });
     }
     void this.view?.webview.postMessage({ type: 'text', text });
   }
 
   public appendUserText(text: string): void {
-    const previous = this.messages.at(-1);
-    if (previous?.role === 'user') {
+    const previous = this.entries.at(-1);
+    if (isChatMessage(previous) && previous.role === 'user') {
       previous.text += text;
       return;
     }
-    this.messages.push({ role: 'user', text });
+    this.entries.push({ role: 'user', text });
   }
 
   private async connect(): Promise<void> {
@@ -144,7 +193,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private appendMessage(role: ChatMessage['role'], text: string): void {
-    this.messages.push({ role, text });
+    this.entries.push({ role, text });
     void this.view?.webview.postMessage({ type: 'message', role, text });
   }
 
@@ -179,7 +228,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'restore',
       sessionId: this.sessionId,
       title: this.sessionTitle,
-      messages: this.messages.map((message) => ({ ...message }))
+      entries: this.entries.map((entry) => isChatMessage(entry) ? { ...entry } : cloneTool(entry))
     });
     this.postActivity();
   }
@@ -195,6 +244,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       scriptUri: webview.asWebviewUri(this.assets.scriptUri).toString()
     });
   }
+}
+
+function isChatMessage(entry: ChatTranscriptEntry | undefined): entry is ChatMessage {
+  return entry !== undefined && 'role' in entry;
+}
+
+function cloneTool(tool: ChatTool): ChatTool {
+  return {
+    ...tool,
+    ...(tool.content === undefined ? {} : { content: tool.content.map((content) => ({ ...content })) }),
+    ...(tool.locations === undefined ? {} : { locations: tool.locations.map((location) => ({ ...location })) })
+  };
 }
 
 export function renderChatHtml(template: string, resources: ChatWebviewResources): string {
@@ -216,4 +277,11 @@ export interface ChatWebviewResources {
 
 function isPromptMessage(value: unknown): value is { type: 'prompt'; text: string } {
   return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'prompt' && typeof (value as { text?: unknown }).text === 'string';
+}
+
+function isOpenLocationMessage(value: unknown): value is ChatToolLocation & { type: 'open-location' } {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'open-location'
+    && typeof (value as { path?: unknown }).path === 'string'
+    && ((value as { line?: unknown }).line === undefined || typeof (value as { line?: unknown }).line === 'number');
 }
