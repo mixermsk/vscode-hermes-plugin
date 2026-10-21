@@ -16,6 +16,8 @@ export function activate(context: vscode.ExtensionContext): void {
     mediaUri,
     templateUri: vscode.Uri.joinPath(mediaUri, 'chat.html'),
     stylesheetUri: vscode.Uri.joinPath(mediaUri, 'chat.css'),
+    markedUri: vscode.Uri.joinPath(mediaUri, 'vendor', 'marked.js'),
+    domPurifyUri: vscode.Uri.joinPath(mediaUri, 'vendor', 'purify.js'),
     scriptUri: vscode.Uri.joinPath(mediaUri, 'chat.js')
   });
   const permissionController = new PermissionController(new VsCodePermissionPresenter());
@@ -26,6 +28,9 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`session/update: ${notification.update.sessionUpdate}`);
       if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
         chatProvider.appendText(notification.update.content.text);
+      }
+      if (notification.update.sessionUpdate === 'user_message_chunk' && notification.update.content.type === 'text') {
+        chatProvider.appendUserText(notification.update.content.text);
       }
       if (notification.update.sessionUpdate === 'agent_thought_chunk') {
         chatProvider.setThinking();

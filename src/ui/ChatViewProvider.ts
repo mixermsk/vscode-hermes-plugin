@@ -13,6 +13,8 @@ export interface ChatViewAssets {
   mediaUri: vscode.Uri;
   templateUri: vscode.Uri;
   stylesheetUri: vscode.Uri;
+  markedUri: vscode.Uri;
+  domPurifyUri: vscode.Uri;
   scriptUri: vscode.Uri;
 }
 
@@ -120,6 +122,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.view?.webview.postMessage({ type: 'text', text });
   }
 
+  public appendUserText(text: string): void {
+    const previous = this.messages.at(-1);
+    if (previous?.role === 'user') {
+      previous.text += text;
+      return;
+    }
+    this.messages.push({ role: 'user', text });
+  }
+
   private async connect(): Promise<void> {
     if (this.sessionId !== undefined || this.connectionHandler === undefined) {
       return;
@@ -179,6 +190,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return renderChatHtml(template, {
       cspSource: webview.cspSource,
       stylesheetUri: webview.asWebviewUri(this.assets.stylesheetUri).toString(),
+      markedUri: webview.asWebviewUri(this.assets.markedUri).toString(),
+      domPurifyUri: webview.asWebviewUri(this.assets.domPurifyUri).toString(),
       scriptUri: webview.asWebviewUri(this.assets.scriptUri).toString()
     });
   }
@@ -188,12 +201,16 @@ export function renderChatHtml(template: string, resources: ChatWebviewResources
   return template
     .replaceAll('{{cspSource}}', resources.cspSource)
     .replace('{{stylesheetUri}}', resources.stylesheetUri)
+    .replace('{{markedUri}}', resources.markedUri)
+    .replace('{{domPurifyUri}}', resources.domPurifyUri)
     .replace('{{scriptUri}}', resources.scriptUri);
 }
 
 export interface ChatWebviewResources {
   cspSource: string;
   stylesheetUri: string;
+  markedUri: string;
+  domPurifyUri: string;
   scriptUri: string;
 }
 

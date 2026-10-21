@@ -13,6 +13,8 @@ suite('ChatViewProvider', () => {
     assert.match(html, /id="messages"/);
     assert.match(html, /id="prompt"/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
+    assert.match(html, /<script src="vscode-webview:\/\/marked\.js"><\/script>/);
+    assert.match(html, /<script src="vscode-webview:\/\/purify\.js"><\/script>/);
     assert.match(html, /<script src="vscode-webview:\/\/chat\.js"><\/script>/);
     assert.match(html, /default-src 'none'; style-src vscode-webview:\/\/chat; script-src vscode-webview:\/\/chat/);
     assert.doesNotMatch(html, /<style>/);
@@ -29,6 +31,17 @@ suite('ChatViewProvider', () => {
 
     assert.equal(harness.messages.children.length, 1);
     assert.equal(harness.messages.children[0].textContent, 'Hello, world!');
+  });
+
+  test('renders streamed agent text as sanitized Markdown', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({ type: 'text', text: '## Result\n\n**Done** [docs](https://example.test) <script>alert(1)</script>' });
+
+    assert.match(harness.messages.children[0].innerHTML, /<h2>Result<\/h2>/);
+    assert.match(harness.messages.children[0].innerHTML, /<strong>Done<\/strong>/);
+    assert.match(harness.messages.children[0].innerHTML, /href="https:\/\/example\.test"/);
+    assert.doesNotMatch(harness.messages.children[0].innerHTML, /script/);
   });
 
   test('starts disconnected, then restores the connected session and transcript', () => {
@@ -104,10 +117,13 @@ suite('ChatViewProvider', () => {
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
       stylesheetUri: {} as never,
+      markedUri: {} as never,
+      domPurifyUri: {} as never,
       scriptUri: {} as never
     });
     const posted: unknown[] = [];
     provider.setSession('session-1', async () => {});
+    provider.appendUserText('Earlier prompt');
 
     const view = {
       webview: {
@@ -120,7 +136,12 @@ suite('ChatViewProvider', () => {
     provider.resolveWebviewView(view);
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(posted, [{ type: 'restore', sessionId: 'session-1', title: undefined, messages: [] }]);
+    assert.deepEqual(posted, [{
+      type: 'restore',
+      sessionId: 'session-1',
+      title: undefined,
+      messages: [{ role: 'user', text: 'Earlier prompt' }]
+    }]);
   });
 
   test('forwards a webview prompt to the connected ACP session', async () => {
@@ -128,6 +149,8 @@ suite('ChatViewProvider', () => {
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
       stylesheetUri: {} as never,
+      markedUri: {} as never,
+      domPurifyUri: {} as never,
       scriptUri: {} as never
     });
     const posted: unknown[] = [];
@@ -174,10 +197,18 @@ function chatStyles(): string {
   return readFileSync(join(process.cwd(), 'media', 'chat.css'), 'utf8');
 }
 
-function webviewResources(): { cspSource: string; stylesheetUri: string; scriptUri: string } {
+function webviewResources(): {
+  cspSource: string;
+  stylesheetUri: string;
+  markedUri: string;
+  domPurifyUri: string;
+  scriptUri: string;
+} {
   return {
     cspSource: 'vscode-webview://chat',
     stylesheetUri: 'vscode-webview://chat.css',
+    markedUri: 'vscode-webview://marked.js',
+    domPurifyUri: 'vscode-webview://purify.js',
     scriptUri: 'vscode-webview://chat.js'
   };
 }
@@ -220,7 +251,16 @@ function createChatHarness(script: string): {
           messageListener = listener;
         }
       }
-    }
+    },
+    marked: {
+      parse(text: string) {
+        return text
+          .replace(/^## (.+)$/m, '<h2>$1</h2>')
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\[(.+?)\]\((https:\/\/[^)]+)\)/g, '<a href="$2">$1</a>');
+      }
+    },
+    DOMPurify: { sanitize(html: string) { return html.replace(/<script[^>]*>[\s\S]*?<\/script>/g, ''); } }
   });
 
   return {
@@ -246,6 +286,7 @@ class FakeElement {
   public readonly children: FakeElement[] = [];
   public className = '';
   public textContent = '';
+  private html = '';
   public value = '';
   public disabled = false;
   public hidden = false;
@@ -272,4 +313,13 @@ class FakeElement {
   }
 
   public focus(): void {}
+
+  public get innerHTML(): string {
+    return this.html;
+  }
+
+  public set innerHTML(value: string) {
+    this.html = value;
+    this.textContent = value.replace(/<[^>]+>/g, '');
+  }
 }

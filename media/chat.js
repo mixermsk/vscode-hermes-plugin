@@ -6,30 +6,43 @@ const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
 const send = document.getElementById('send');
 let activeAgentMessage;
+let activeAgentText = '';
 
 function append(role, text) {
   const message = document.createElement('div');
   message.className = `message ${role}`;
-  message.textContent = text;
+  renderMessage(message, role, text);
   messages.appendChild(message);
   messages.scrollTop = messages.scrollHeight;
   return message;
 }
 
+function renderMessage(message, role, text) {
+  if (role !== 'agent') {
+    message.textContent = text;
+    return;
+  }
+  message.innerHTML = DOMPurify.sanitize(marked.parse(text), { USE_PROFILES: { html: true } });
+}
+
 function appendAgentText(text) {
   if (!activeAgentMessage) {
     activeAgentMessage = append('agent', '');
+    activeAgentText = '';
   }
-  activeAgentMessage.textContent += text;
+  activeAgentText += text;
+  renderMessage(activeAgentMessage, 'agent', activeAgentText);
   messages.scrollTop = messages.scrollHeight;
 }
 
 function appendMessage(role, text) {
   if (role === 'agent') {
     activeAgentMessage = append('agent', text);
+    activeAgentText = text;
     return;
   }
   activeAgentMessage = undefined;
+  activeAgentText = '';
   append(role, text);
 }
 
@@ -41,6 +54,7 @@ function setActivity(text) {
 function restore(message) {
   messages.replaceChildren();
   activeAgentMessage = undefined;
+  activeAgentText = '';
   setActivity();
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.messages) {

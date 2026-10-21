@@ -1,6 +1,7 @@
 .vscode/**
 .hermes/**
 src/**
+scripts/**
 out/**
 node_modules/**
 *.ts
