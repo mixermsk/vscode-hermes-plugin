@@ -16,6 +16,7 @@ function append(role, text) {
   message.className = `message ${role}`;
   renderMessage(message, role, text);
   messages.appendChild(message);
+  moveActivityToEnd();
   messages.scrollTop = messages.scrollHeight;
   return message;
 }
@@ -57,6 +58,7 @@ function appendTool(tool) {
   toolElements.set(tool.toolCallId, card);
   renderTool(card, tool);
   messages.appendChild(card);
+  moveActivityToEnd();
   messages.scrollTop = messages.scrollHeight;
 }
 
@@ -73,7 +75,7 @@ function renderTool(card, tool) {
   card.replaceChildren();
   const summary = document.createElement('summary');
   summary.className = `tool-summary ${tool.status ?? 'pending'}`;
-  summary.textContent = `${tool.status ?? 'pending'} · ${tool.title}`;
+  summary.textContent = `${toolStatusLabel(tool.status)} · ${tool.title}`;
   card.appendChild(summary);
 
   const body = document.createElement('div');
@@ -107,9 +109,33 @@ function renderTool(card, tool) {
   card.appendChild(body);
 }
 
+function toolStatusLabel(status) {
+  if (status === 'pending') {
+    return '⏳';
+  }
+  if (status === 'in_progress') {
+    return '⚙️';
+  }
+  if (status === 'completed') {
+    return '✅';
+  }
+  if (status === 'failed') {
+    return '❌';
+  }
+  return status ?? 'pending';
+}
+
 function setActivity(text) {
   activity.hidden = !text;
   activity.textContent = text ?? '';
+  moveActivityToEnd();
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function moveActivityToEnd() {
+  if (!activity.hidden) {
+    messages.appendChild(activity);
+  }
 }
 
 function setAcceptEdits(enabled, disabled = false) {

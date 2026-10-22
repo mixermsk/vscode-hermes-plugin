@@ -38,6 +38,7 @@ body {
 }
 
 .activity {
+  flex-shrink: 0;
   overflow: hidden;
   padding-left: 2px;
   color: var(--vscode-descriptionForeground);

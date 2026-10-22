@@ -11,6 +11,8 @@ suite('ChatViewProvider', () => {
 
     assert.match(html, /class="chat-layout"/);
     assert.match(html, /id="messages"/);
+    assert.ok(html.indexOf('id="messages"') < html.indexOf('id="activity"'));
+    assert.ok(html.indexOf('id="activity"') < html.indexOf('id="accept-edits"'));
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="accept-edits"'));
     assert.ok(html.indexOf('id="accept-edits"') < html.indexOf('id="form"'));
     assert.match(html, /id="prompt"/);
@@ -23,6 +25,7 @@ suite('ChatViewProvider', () => {
     assert.doesNotMatch(html, /<style>/);
     assert.doesNotMatch(html, /<script>\s/);
     assert.match(styles, /\.messages\s*\{[^}]*overflow-y:\s*auto/);
+    assert.match(styles, /\.activity\s*\{[^}]*flex-shrink:\s*0/);
     assert.match(styles, /\.composer\s*\{[^}]*flex-shrink:\s*0/);
     assert.match(styles, /#send\.stop\s*\{[^}]*background:\s*var\(--vscode-inputValidation-errorBackground\)/);
   });
@@ -85,6 +88,11 @@ suite('ChatViewProvider', () => {
 
     assert.equal(harness.activity.hidden, false);
     assert.equal(harness.activity.textContent, 'Running: Read ChatViewProvider.ts');
+    assert.equal(harness.messages.children.at(-1), harness.activity);
+    assert.equal(harness.messages.scrollTop, harness.messages.scrollHeight);
+
+    harness.receive({ type: 'text', text: 'Done' });
+    assert.equal(harness.messages.children.at(-1), harness.activity);
   });
 
   test('restores and changes the Accept Edits toggle', () => {
@@ -119,6 +127,7 @@ suite('ChatViewProvider', () => {
         locations: [{ path: '/work/src/ui/ChatViewProvider.ts', line: 100 }]
       }
     });
+    assert.match(harness.messages.children[0].textContent, /⚙️/);
     harness.receive({
       type: 'tool-update',
       tool: {
@@ -133,8 +142,14 @@ suite('ChatViewProvider', () => {
 
     assert.equal(harness.messages.children.length, 1);
     assert.equal(harness.messages.children[0].className, 'tool');
-    assert.match(harness.messages.children[0].textContent, /completed/);
+    assert.match(harness.messages.children[0].textContent, /✅/);
     assert.match(harness.messages.children[0].textContent, /--- \/work\/src\/ui\/ChatViewProvider\.ts/);
+
+    harness.receive({ type: 'tool', tool: { toolCallId: 'tool-2', title: 'Write README.md', status: 'failed' } });
+    assert.match(harness.messages.children[1].textContent, /❌/);
+
+    harness.receive({ type: 'tool', tool: { toolCallId: 'tool-3', title: 'Approve edit', status: 'pending' } });
+    assert.match(harness.messages.children[2].textContent, /⏳/);
   });
 
   test('sends the prompt with Enter but leaves Shift+Enter and Command+Enter to the textarea', () => {
@@ -338,6 +353,7 @@ function createChatHarness(script: string): {
     ['prompt', new FakeElement()],
     ['send', new FakeElement()]
   ]);
+  elements.get('activity')!.hidden = true;
   elements.get('prompt')!.disabled = true;
   elements.get('send')!.disabled = true;
   const posted: unknown[] = [];
@@ -418,8 +434,12 @@ class FakeElement {
   private readonly listeners = new Map<string, (event: unknown) => void>();
 
   public appendChild(child: FakeElement): void {
+    const existingIndex = this.children.indexOf(child);
+    if (existingIndex !== -1) {
+      this.children.splice(existingIndex, 1);
+    }
     this.children.push(child);
-    this.textContent += child.textContent;
+    this.textContent = this.children.map((element) => element.textContent).join('');
     this.scrollHeight = this.children.length;
   }
 

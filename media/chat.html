@@ -9,8 +9,9 @@
 <body>
   <main class="chat-layout">
     <div id="session" class="session">Connecting to Hermes…</div>
-    <div id="activity" class="activity" role="status" hidden></div>
-    <div id="messages" class="messages" role="log" aria-live="polite"></div>
+    <div id="messages" class="messages" role="log" aria-live="polite">
+      <div id="activity" class="activity" role="status" hidden></div>
+    </div>
     <label class="accept-edits"><input id="accept-edits" type="checkbox" disabled> Accept Edits</label>
     <form id="form" class="composer">
       <textarea id="prompt" rows="4" placeholder="Ask Hermes…" aria-label="Message to Hermes" disabled></textarea>
