@@ -1,4 +1,5 @@
 import type { RepositoryIdentity, RepositoryResolution } from '../domain/RepositoryIdentity';
+import type { SessionRecord } from '../domain/SessionRecord';
 import { HermesGatewayClient, type GatewaySession } from '../gateway/HermesGatewayClient';
 import { SessionRegistry } from './SessionRegistry';
 
@@ -56,6 +57,38 @@ export class GatewaySessionService {
     this.activeRepository = repository;
     await this.client.connect();
     return this.client.createSession(repository.cwd);
+  }
+
+  public async listSessions(cwd: string): Promise<readonly SessionRecord[]> {
+    const repository = await this.resolveRepository(cwd);
+    this.activeRepository = repository;
+    return this.registry.list(repository.logicalId).filter((record) => record.resumeState !== 'resume-failed');
+  }
+
+  public async resume(cwd: string, sessionId: string): Promise<GatewaySession> {
+    const repository = await this.resolveRepository(cwd);
+    const record = this.registry.list(repository.logicalId).find((candidate) => candidate.sessionId === sessionId);
+    if (record === undefined || record.resumeState === 'resume-failed') {
+      throw new Error('Hermes session is not available for this repository.');
+    }
+    this.activeRepository = repository;
+    await this.client.connect();
+    try {
+      const session = await this.client.resumeSession(sessionId);
+      await this.registry.upsert({
+        ...record,
+        gitRoot: repository.gitRoot,
+        cwd: repository.cwd,
+        ...(repository.remoteOrigin === undefined ? {} : { remoteOrigin: repository.remoteOrigin }),
+        ...(repository.branch === undefined ? {} : { branchAtLastSeen: repository.branch }),
+        lastActiveAt: new Date().toISOString(),
+        resumeState: 'resumable'
+      });
+      return session;
+    } catch (error) {
+      await this.registry.markResumeFailed(sessionId);
+      throw error;
+    }
   }
 
   public async persistSession(sessionId: string, title: string | undefined): Promise<void> {

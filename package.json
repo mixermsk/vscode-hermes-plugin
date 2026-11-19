@@ -19,6 +19,11 @@
       {
         "command": "hermesGateway.openChat",
         "title": "Hermes Gateway: Open Chat"
+      },
+      {
+        "command": "hermesGateway.pickSession",
+        "title": "Hermes Gateway: Switch Session",
+        "icon": "$(list-selection)"
       }
     ],
     "viewsContainers": {
@@ -36,6 +41,15 @@
           "id": "hermesGateway.chat",
           "name": "Chat",
           "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "hermesGateway.pickSession",
+          "when": "view == hermesGateway.chat",
+          "group": "navigation@2"
         }
       ]
     }

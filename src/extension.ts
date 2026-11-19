@@ -316,6 +316,58 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
     await connect();
   });
+  const pickSessionCommand = vscode.commands.registerCommand('hermesGateway.pickSession', async () => {
+    await connect();
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder === undefined) {
+      throw new Error('Hermes Gateway requires an opened Git repository.');
+    }
+    const sessions = await sessionService.listSessions(workspaceFolder.uri.fsPath);
+    if (sessions.length === 0) {
+      void vscode.window.showInformationMessage('No saved Hermes sessions exist for this Git repository.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      sessions.map((session) => ({
+        label: session.title ?? `Session ${shortSessionId(session.sessionId)}`,
+        description: session.branchAtLastSeen === undefined ? undefined : `Branch: ${session.branchAtLastSeen}`,
+        detail: `${new Date(session.lastActiveAt).toLocaleString()} · ${session.sessionId}`,
+        sessionId: session.sessionId
+      })),
+      { placeHolder: 'Switch to a Hermes session for this Git repository' }
+    );
+    if (picked === undefined || picked.sessionId === activeSessionId) {
+      return;
+    }
+    const session = await sessionService.resume(workspaceFolder.uri.fsPath, picked.sessionId);
+    activeSessionId = session.sessionId;
+    activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
+    autoApproveEditSessionId = undefined;
+    subagents.clear();
+    chatProvider.clearTranscript();
+    chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
+    for (const message of session.messages) {
+      if (message.role === 'delegation') {
+        chatProvider.upsertDelegation({
+          subagentId: message.subagentId,
+          title: message.title,
+          status: message.status,
+          summary: message.summary,
+          details: message.details
+        });
+      } else if (message.role === 'user') {
+        chatProvider.appendUserText(message.text);
+      } else {
+        chatProvider.appendText(message.text);
+      }
+    }
+    chatProvider.setSubagentTrackingStatus({ kind: 'connected', message: 'Gateway connected' });
+    await refreshSubagents(activeSessionId);
+    await refreshModelOptions(activeSessionId);
+    await refreshReasoning(activeSessionId);
+    await sessionService.persistSession(activeSessionId, activeSessionTitle);
+    void requestApprovals(activeSessionId);
+  });
 
   context.subscriptions.push(
     output,
@@ -323,6 +375,7 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true }
     }),
     openChatCommand,
+    pickSessionCommand,
     { dispose: () => gateway.dispose() }
   );
 }
@@ -352,4 +405,8 @@ async function respondApproval(gateway: HermesGatewayClient, sessionId: string, 
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function shortSessionId(sessionId: string): string {
+  return sessionId.length <= 12 ? sessionId : `${sessionId.slice(0, 12)}…`;
 }
