@@ -85,6 +85,14 @@ export class HermesGatewayClient {
     return this.parseSession(await this.rpc('session.resume', { session_id: sessionId }));
   }
 
+  public async setSessionTitle(sessionId: string, title: string): Promise<string> {
+    const result = await this.rpc('session.title', { session_id: sessionId, title });
+    if (!isRecord(result) || typeof result.title !== 'string') {
+      throw new Error('Local Hermes Gateway returned an invalid session title.');
+    }
+    return result.title;
+  }
+
   public async submitPrompt(sessionId: string, text: string): Promise<void> {
     if (this.completions.has(sessionId)) {
       throw new Error('Hermes is already processing a prompt for this session.');

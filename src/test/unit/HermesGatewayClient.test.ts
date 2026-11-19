@@ -20,6 +20,9 @@ class FakeGatewayConnection implements GatewayConnection {
     if (method === 'session.create') {
       return { session_id: 'session-1', messages: [{ role: 'user', text: 'Earlier prompt' }], info: { title: 'Gateway chat' } };
     }
+    if (method === 'session.title') {
+      return { title: params.title };
+    }
     if (method === 'prompt.submit') {
       return { status: 'queued' };
     }
@@ -129,6 +132,20 @@ suite('HermesGatewayClient', () => {
     await client.createSession('/work/project');
 
     assert.equal(connectedConnection.calls.at(-1)?.method, 'session.create');
+  });
+
+  test('renames a Gateway session', async () => {
+    const connection = new FakeGatewayConnection();
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    const title = await client.setSessionTitle('session-1', '[VS Code] Gateway chat');
+
+    assert.equal(title, '[VS Code] Gateway chat');
+    assert.deepEqual(connection.calls.at(-1), {
+      method: 'session.title',
+      params: { session_id: 'session-1', title: '[VS Code] Gateway chat' }
+    });
   });
 
   test('interrupts the active prompt with the generation returned by Gateway', async () => {
