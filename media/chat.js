@@ -215,7 +215,7 @@ function renderModelOptions(options) {
     for (const name of provider.models ?? []) {
       const option = document.createElement('option');
       option.value = name;
-      option.textContent = name;
+      option.textContent = `${provider.name || provider.slug} / ${name}`;
       modelChoices.push({ model: name, provider: provider.slug, isCurrent: Boolean(provider.isCurrent) });
       model.appendChild(option);
     }

@@ -30,6 +30,8 @@ suite('ChatViewProvider', () => {
     assert.match(styles, /\.messages\s*\{[^}]*overflow-y:\s*auto/);
     assert.match(styles, /\.activity\s*\{[^}]*flex-shrink:\s*0/);
     assert.match(styles, /\.composer\s*\{[^}]*flex-shrink:\s*0/);
+    assert.match(styles, /\.composer-controls\s*\{[^}]*flex-wrap:\s*wrap/);
+    assert.match(styles, /\.selectors\s*\{[^}]*flex-wrap:\s*wrap/);
     assert.match(styles, /#send\.stop\s*\{[^}]*background:\s*var\(--vscode-inputValidation-errorBackground\)/);
   });
 
@@ -249,7 +251,7 @@ suite('ChatViewProvider', () => {
     assert.equal(harness.autoApproveEdits.checked, false);
   });
 
-  test('renders model options and posts the chosen model with its provider', () => {
+  test('renders each model with its provider and posts the chosen route', () => {
     const harness = createChatHarness(chatScript());
 
     assert.equal(harness.model.disabled, true);
@@ -260,14 +262,20 @@ suite('ChatViewProvider', () => {
       provider: 'deepseek',
       providers: [
         { slug: 'deepseek', name: 'DeepSeek', isCurrent: true, models: ['deepseek-v4-pro', 'deepseek-v4-flash'] },
-        { slug: 'anthropic', name: 'Anthropic', models: ['claude-4.5'] }
+        { slug: 'anthropic', name: 'Anthropic', models: ['deepseek-v4-pro', 'claude-4.5'] }
       ]
     });
 
     assert.equal(harness.model.disabled, false);
     assert.equal(harness.model.selectedIndex, 0);
+    assert.deepEqual(harness.model.children.map((option) => option.textContent), [
+      'DeepSeek / deepseek-v4-pro',
+      'DeepSeek / deepseek-v4-flash',
+      'Anthropic / deepseek-v4-pro',
+      'Anthropic / claude-4.5'
+    ]);
 
-    harness.model.selectedIndex = 2;
+    harness.model.selectedIndex = 3;
     harness.selectModel();
 
     assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [

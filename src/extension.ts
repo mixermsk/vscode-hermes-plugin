@@ -106,6 +106,79 @@ export function activate(context: vscode.ExtensionContext): void {
       approvalDialogOpen = false;
     }
   };
+  const handlePrompt = async (text: string): Promise<void> => {
+    if (activeSessionId === undefined) {
+      throw new Error('Hermes is not connected. Reopen the chat and try again.');
+    }
+    const command = text.trim();
+    if (command === '/new' || command === '/reset') {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (workspaceFolder === undefined) {
+        throw new Error('Hermes Gateway requires an opened Git repository.');
+      }
+      const session = await sessionService.createNew(workspaceFolder.uri.fsPath);
+      activeSessionId = session.sessionId;
+      activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
+      autoApproveEditSessionId = undefined;
+      subagents.clear();
+      chatProvider.clearTranscript();
+      chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
+      chatProvider.setSubagentTrackingStatus({ kind: 'connected', message: 'Gateway connected' });
+      await refreshSubagents(activeSessionId);
+      await refreshModelOptions(activeSessionId);
+      await refreshReasoning(activeSessionId);
+      await sessionService.persistSession(activeSessionId, activeSessionTitle);
+      return;
+    }
+    const branchMatch = /^\/branch(?:\s+(.*))?$/.exec(command);
+    if (branchMatch !== null) {
+      let title = branchMatch[1]?.trim() || undefined;
+      if (title === '--here') {
+        title = undefined;
+      } else if (title?.startsWith('--here ')) {
+        title = title.slice('--here '.length).trim() || undefined;
+      }
+      const session = await gateway.resumeSession(await gateway.branchSession(activeSessionId, title));
+      activeSessionId = session.sessionId;
+      activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
+      autoApproveEditSessionId = undefined;
+      subagents.clear();
+      chatProvider.clearTranscript();
+      chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
+      for (const message of session.messages) {
+        if (message.role === 'delegation') {
+          chatProvider.upsertDelegation({
+            subagentId: message.subagentId,
+            title: message.title,
+            status: message.status,
+            summary: message.summary,
+            details: message.details
+          });
+        } else if (message.role === 'user') {
+          chatProvider.appendUserText(message.text);
+        } else {
+          chatProvider.appendText(message.text);
+        }
+      }
+      chatProvider.setSubagentTrackingStatus({ kind: 'connected', message: 'Gateway connected' });
+      await refreshSubagents(activeSessionId);
+      await refreshModelOptions(activeSessionId);
+      await refreshReasoning(activeSessionId);
+      await sessionService.persistSession(activeSessionId, activeSessionTitle);
+      return;
+    }
+    if (command.startsWith('/')) {
+      const result = await gateway.executeSlashCommand(activeSessionId, command);
+      if ('output' in result) {
+        chatProvider.appendText(result.output);
+      } else {
+        await gateway.submitPrompt(activeSessionId, result.prompt);
+      }
+    } else {
+      await gateway.submitPrompt(activeSessionId, text);
+    }
+    await sessionService.persistSession(activeSessionId, activeSessionTitle);
+  };
 
   gateway.onEvent((event) => {
     if (event.sessionId !== activeSessionId) {
@@ -173,10 +246,7 @@ export function activate(context: vscode.ExtensionContext): void {
         subagents.clear();
         chatProvider.setSession(
           activeSessionId,
-          async (text) => {
-            await gateway.submitPrompt(activeSessionId!, text);
-            await sessionService.persistSession(activeSessionId!, activeSessionTitle);
-          },
+          handlePrompt,
           activeSessionTitle
         );
         for (const message of result.session.messages) {

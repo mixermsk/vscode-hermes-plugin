@@ -208,10 +208,11 @@ body {
 
 .composer-controls {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 12px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .selectors {
@@ -219,26 +220,25 @@ body {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
-.model-picker {
+.model-picker,
+.reasoning-picker {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .model-picker-label {
   flex-shrink: 0;
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
-}
-
-.reasoning-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
 }
 
 .reasoning-picker-label {
@@ -258,6 +258,23 @@ select.reasoning-select {
   border: 1px solid var(--vscode-input-border);
   background: var(--vscode-input-background);
   font: inherit;
+}
+
+@media (max-width: 520px) {
+  .selectors {
+    width: 100%;
+  }
+
+  .model-picker,
+  .reasoning-picker {
+    flex: 1 1 100%;
+  }
+
+  select.model-select,
+  select.reasoning-select {
+    flex: 1 1 auto;
+    width: auto;
+  }
 }
 
 textarea,

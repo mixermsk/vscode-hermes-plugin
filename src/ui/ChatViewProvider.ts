@@ -220,6 +220,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postState();
   }
 
+  public clearTranscript(): void {
+    this.entries.length = 0;
+    this.tools.clear();
+    this.subagentEntries.clear();
+    this.activeTools.clear();
+    this.activity = undefined;
+    this.activityPosted = false;
+  }
+
   public setAutoApproveEdits(enabled: boolean): void {
     this.autoApproveEdits = enabled;
     void this.view?.webview.postMessage({ type: 'auto-approve-edits', enabled });

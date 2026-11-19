@@ -7,6 +7,7 @@ class FakeGatewayConnection implements GatewayConnection {
   public modelOptions: unknown = { providers: [], model: '', provider: '' };
   public resumeMessages: unknown = [];
   public mutateResult: ((payload: Record<string, unknown>) => unknown) | undefined;
+  public slashResult: unknown = { output: 'Command completed.' };
   private listener: ((event: unknown) => void) | undefined;
 
   public async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -44,6 +45,9 @@ class FakeGatewayConnection implements GatewayConnection {
         return this.mutateResult(payload);
       }
       return { session_id: params.session_id, operation: 'model', model: payload.model, provider: payload.provider ?? '' };
+    }
+    if (method === 'slash.exec') {
+      return this.slashResult;
     }
     throw new Error(`Unexpected RPC: ${method}`);
   }
@@ -167,6 +171,50 @@ suite('HermesGatewayClient', () => {
       method: 'session.interrupt',
       params: { session_id: 'session-1', execution_generation: 7 }
     });
+  });
+
+  test('executes approval commands outside the prompt submission path', async () => {
+    const connection = new FakeGatewayConnection();
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    await client.createSession('/work/project');
+
+    connection.slashResult = { type: 'send', message: 'Continue after approval.' };
+    assert.deepEqual(await client.executeSlashCommand('session-1', '/approve'), { prompt: 'Continue after approval.' });
+    assert.deepEqual(connection.calls.at(-1), {
+      method: 'slash.exec',
+      params: { session_id: 'session-1', command: '/approve' }
+    });
+  });
+
+  test('branches a session with fresh revision and generation fences', async () => {
+    const connection = new FakeGatewayConnection();
+    connection.mutateResult = () => ({ branched_session_id: 'branch-1' });
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    await client.createSession('/work/project');
+
+    assert.equal(await client.branchSession('session-1', 'Investigate alternative'), 'branch-1');
+    const branchCall = connection.calls.at(-1);
+    assert.equal(branchCall?.method, 'session.mutate');
+    assert.deepEqual(
+      {
+        session_id: branchCall?.params.session_id,
+        expected_revision: branchCall?.params.expected_revision,
+        expected_generation: branchCall?.params.expected_generation,
+        operation: branchCall?.params.operation,
+        payload: branchCall?.params.payload
+      },
+      {
+        session_id: 'session-1',
+        expected_revision: 3,
+        expected_generation: 1,
+        operation: 'branch',
+        payload: { title: 'Investigate alternative' }
+      }
+    );
   });
 
   test('lists the session model options and switches to another model', async () => {

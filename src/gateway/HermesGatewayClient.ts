@@ -65,6 +65,10 @@ export type GatewayModelSwitchOutcome =
   | { kind: 'noop'; model: string }
   | { kind: 'confirmation_required'; confirm: string; model: string; provider: string; message: string };
 
+export type GatewaySlashCommandResult =
+  | { output: string }
+  | { prompt: string };
+
 export class HermesGatewayClient {
   private connection: GatewayConnection | undefined;
   private eventSubscription: Subscription | undefined;
@@ -173,6 +177,36 @@ export class HermesGatewayClient {
 
   public async respondApproval(sessionId: string, requestId: string, choice: string): Promise<void> {
     await this.rpc('approval.respond', { session_id: sessionId, request_id: requestId, choice });
+  }
+
+  public async executeSlashCommand(sessionId: string, command: string): Promise<GatewaySlashCommandResult> {
+    const result = await this.rpc('slash.exec', { session_id: sessionId, command });
+    if (!isRecord(result)) {
+      throw new Error('Local Hermes Gateway returned an invalid slash command result.');
+    }
+    if (result.type === 'send' && typeof result.message === 'string') {
+      return { prompt: result.message };
+    }
+    if (typeof result.output === 'string') {
+      return { output: result.output };
+    }
+    throw new Error('Local Hermes Gateway returned an invalid slash command result.');
+  }
+
+  public async branchSession(sessionId: string, title: string | undefined): Promise<string> {
+    const { revision, executionGeneration } = await this.sessionFences(sessionId);
+    const result = await this.rpc('session.mutate', {
+      session_id: sessionId,
+      request_id: `vscode-branch-${randomUUID()}`,
+      expected_revision: revision,
+      expected_generation: executionGeneration,
+      operation: 'branch',
+      payload: title === undefined ? {} : { title }
+    });
+    if (!isRecord(result) || typeof result.branched_session_id !== 'string' || result.branched_session_id.length === 0) {
+      throw new Error('Local Hermes Gateway did not create a branched session.');
+    }
+    return result.branched_session_id;
   }
 
   public async getModelOptions(sessionId: string): Promise<GatewayModelOptions> {
