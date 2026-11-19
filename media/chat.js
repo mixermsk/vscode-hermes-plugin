@@ -2,7 +2,6 @@ const vscode = acquireVsCodeApi();
 const session = document.getElementById('session');
 const activity = document.getElementById('activity');
 const subagentTracking = document.getElementById('subagent-tracking');
-const subagents = document.getElementById('subagents');
 const autoApproveEdits = document.getElementById('auto-approve-edits');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
@@ -12,6 +11,7 @@ let activeAgentMessage;
 let activeAgentText = '';
 let promptRunning = false;
 const toolElements = new Map();
+const subagentElements = new Map();
 
 function append(role, text) {
   const message = document.createElement('div');
@@ -71,6 +71,39 @@ function updateTool(tool) {
     return;
   }
   renderTool(card, tool);
+}
+
+function appendSubagent(subagent) {
+  activeAgentMessage = undefined;
+  activeAgentText = '';
+  const row = document.createElement('div');
+  subagentElements.set(subagent.subagentId, row);
+  renderSubagent(row, subagent);
+  messages.appendChild(row);
+  moveActivityToEnd();
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function updateSubagent(subagent) {
+  const row = subagentElements.get(subagent.subagentId);
+  if (!row) {
+    appendSubagent(subagent);
+    return;
+  }
+  renderSubagent(row, subagent);
+}
+
+function renderSubagent(row, subagent) {
+  row.replaceChildren();
+  row.className = `subagent ${subagent.status}`;
+  const label = document.createElement('span');
+  label.className = 'subagent-label';
+  label.textContent = subagent.title;
+  const state = document.createElement('span');
+  state.className = 'subagent-state';
+  state.textContent = subagent.summary ?? subagent.activity ?? subagent.status;
+  row.appendChild(label);
+  row.appendChild(state);
 }
 
 function renderTool(card, tool) {
@@ -140,24 +173,6 @@ function setSubagentTracking(status) {
   subagentTracking.textContent = status?.message ?? '';
 }
 
-function setSubagents(items) {
-  subagents.replaceChildren();
-  subagents.hidden = !items || items.length === 0;
-  for (const item of items ?? []) {
-    const row = document.createElement('div');
-    row.className = `subagent ${item.status}`;
-    const label = document.createElement('span');
-    label.className = 'subagent-label';
-    label.textContent = item.title;
-    const state = document.createElement('span');
-    state.className = 'subagent-state';
-    state.textContent = item.summary ?? item.activity ?? item.status;
-    row.appendChild(label);
-    row.appendChild(state);
-    subagents.appendChild(row);
-  }
-}
-
 function moveActivityToEnd() {
   if (!activity.hidden) {
     messages.appendChild(activity);
@@ -175,15 +190,17 @@ function restore(message) {
   activeAgentMessage = undefined;
   activeAgentText = '';
   toolElements.clear();
+  subagentElements.clear();
   setActivity();
   setSubagentTracking(message.subagentTracking);
-  setSubagents(message.subagents);
   autoApproveEdits.checked = Boolean(message.autoApproveEdits);
   autoApproveEdits.disabled = false;
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.entries) {
     if (entry.toolCallId) {
       appendTool(entry);
+    } else if (entry.subagentId) {
+      appendSubagent(entry);
     } else {
       appendMessage(entry.role, entry.text);
     }
@@ -253,14 +270,17 @@ window.addEventListener('message', (event) => {
   if (message.type === 'tool-update') {
     updateTool(message.tool);
   }
+  if (message.type === 'subagent') {
+    appendSubagent(message.subagent);
+  }
+  if (message.type === 'subagent-update') {
+    updateSubagent(message.subagent);
+  }
   if (message.type === 'activity') {
     setActivity(message.text);
   }
   if (message.type === 'subagent-tracking') {
     setSubagentTracking(message.status);
-  }
-  if (message.type === 'subagents') {
-    setSubagents(message.subagents);
   }
   if (message.type === 'auto-approve-edits') {
     autoApproveEdits.checked = Boolean(message.enabled);
@@ -282,7 +302,7 @@ window.addEventListener('message', (event) => {
     activeAgentMessage = undefined;
     setActivity();
     setSubagentTracking();
-    setSubagents();
+    subagentElements.clear();
     session.textContent = `Disconnected: ${message.text}`;
     prompt.disabled = true;
     setPromptRunning(false);

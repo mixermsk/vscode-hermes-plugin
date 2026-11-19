@@ -4,7 +4,6 @@ import { SessionRegistry } from './services/SessionRegistry';
 import { GatewaySessionService } from './services/GatewaySessionService';
 import { GitRepositoryResolver } from './services/GitRepositoryResolver';
 import { canAutoApproveFileEdit } from './services/ApprovalPolicy';
-import { withVsCodeSessionTitlePrefix } from './services/VsCodeSessionTitle';
 import { LocalHermesGatewayConnectionFactory } from './gateway/GatewayConnectionFactory';
 import { HermesGatewayClient, type GatewayApproval } from './gateway/HermesGatewayClient';
 import { mergeSubagentSnapshot, parseGatewaySubagentEvent, parseGatewaySubagentList } from './gateway/GatewaySubagentSource';
@@ -46,15 +45,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const subagents = new Map<string, SubagentSnapshot>();
 
   const publishSubagents = (): void => chatProvider.setSubagents([...subagents.values()]);
-  const applyVsCodeSessionTitle = async (sessionId: string, title: string | undefined): Promise<string> => {
-    const prefixedTitle = withVsCodeSessionTitlePrefix(title);
-    const storedTitle = prefixedTitle === title ? prefixedTitle : await gateway.setSessionTitle(sessionId, prefixedTitle);
+  const applyGatewaySessionTitle = async (sessionId: string, title: string | undefined): Promise<string | undefined> => {
     if (activeSessionId === sessionId) {
-      activeSessionTitle = storedTitle;
-      chatProvider.setSessionTitle(sessionId, storedTitle);
+      activeSessionTitle = title;
+      chatProvider.setSessionTitle(sessionId, title);
     }
-    await registry.setTitle(sessionId, storedTitle);
-    return storedTitle;
+    await registry.setTitle(sessionId, title);
+    return title;
   };
   const refreshSubagents = async (sessionId: string): Promise<void> => {
     const snapshot = parseGatewaySubagentList(await gateway.getSubagents(sessionId));
@@ -120,11 +117,6 @@ export function activate(context: vscode.ExtensionContext): void {
       chatProvider.setThinking();
       return;
     }
-    if (event.type === 'session.title' && event.title !== undefined) {
-      void applyVsCodeSessionTitle(event.sessionId, event.title).catch((error) => {
-        output.appendLine(`Gateway session title update failed: ${messageOf(error)}`);
-      });
-    }
   });
 
   const connect = async (): Promise<void> => {
@@ -149,7 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
           result = { kind: 'created', session: await sessionService.createNew(workspaceFolder.uri.fsPath) };
         }
         activeSessionId = result.session.sessionId;
-        activeSessionTitle = await applyVsCodeSessionTitle(activeSessionId, result.session.title);
+        activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, result.session.title);
         if (autoApproveEditSessionId !== activeSessionId) {
           autoApproveEditSessionId = undefined;
         }

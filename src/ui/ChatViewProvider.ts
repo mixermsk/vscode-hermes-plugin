@@ -37,12 +37,20 @@ export interface ChatTool {
   locations?: readonly ChatToolLocation[];
 }
 
+export interface ChatSubagent {
+  subagentId: string;
+  title: string;
+  status: SubagentSnapshot['status'];
+  activity?: string;
+  summary?: string;
+}
+
 export interface ChatSubagentTrackingStatus {
   kind: 'connected' | 'unavailable' | 'incompatible' | 'unauthorized';
   message: string;
 }
 
-export type ChatTranscriptEntry = ChatMessage | ChatTool;
+export type ChatTranscriptEntry = ChatMessage | ChatTool | ChatSubagent;
 
 export interface ChatViewAssets {
   mediaUri: vscode.Uri;
@@ -64,7 +72,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
   private subagentTracking: ChatSubagentTrackingStatus | undefined;
-  private subagents: readonly SubagentSnapshot[] = [];
   private promptRunning = false;
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
@@ -72,6 +79,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private autoApproveEdits = false;
   private readonly activeTools = new Map<string, string>();
   private readonly tools = new Map<string, ChatTool>();
+  private readonly subagentEntries = new Map<string, ChatSubagent>();
 
   public constructor(private readonly assets: ChatViewAssets) {}
 
@@ -176,8 +184,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public setSubagents(subagents: readonly SubagentSnapshot[]): void {
-    this.subagents = subagents.map((subagent) => ({ ...subagent }));
-    void this.view?.webview.postMessage({ type: 'subagents', subagents: this.subagents });
+    for (const subagent of subagents) {
+      this.upsertSubagent(subagent);
+    }
+  }
+
+  public upsertSubagent(subagent: SubagentSnapshot): void {
+    const next: ChatSubagent = {
+      subagentId: subagent.id,
+      title: subagent.title,
+      status: subagent.status,
+      ...(subagent.activity === undefined ? {} : { activity: subagent.activity }),
+      ...(subagent.summary === undefined ? {} : { summary: subagent.summary })
+    };
+    const current = this.subagentEntries.get(subagent.id);
+    if (current === undefined) {
+      this.subagentEntries.set(subagent.id, next);
+      this.entries.push(next);
+      void this.view?.webview.postMessage({ type: 'subagent', subagent: cloneSubagent(next) });
+      return;
+    }
+    Object.assign(current, next);
+    void this.view?.webview.postMessage({ type: 'subagent-update', subagent: cloneSubagent(current) });
   }
 
   public setSessionTitle(sessionId: string, title: string | undefined): void {
@@ -193,11 +221,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
     this.subagentTracking = undefined;
-    this.subagents = [];
     this.autoApproveEdits = false;
     this.promptRunning = false;
     this.entries.length = 0;
     this.tools.clear();
+    this.subagentEntries.clear();
     this.clearActivity();
     void this.view?.webview.postMessage({ type: 'disconnected', text: message });
   }
@@ -305,8 +333,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       title: this.sessionTitle,
       autoApproveEdits: this.autoApproveEdits,
       ...(this.subagentTracking === undefined ? {} : { subagentTracking: this.subagentTracking }),
-      subagents: this.subagents.map((subagent) => ({ ...subagent })),
-      entries: this.entries.map((entry) => isChatMessage(entry) ? { ...entry } : cloneTool(entry))
+      entries: this.entries.map(cloneTranscriptEntry)
     });
     this.postActivity();
   }
@@ -326,6 +353,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 function isChatMessage(entry: ChatTranscriptEntry | undefined): entry is ChatMessage {
   return entry !== undefined && 'role' in entry;
+}
+
+function isChatSubagent(entry: ChatTranscriptEntry): entry is ChatSubagent {
+  return 'subagentId' in entry;
+}
+
+function cloneTranscriptEntry(entry: ChatTranscriptEntry): ChatTranscriptEntry {
+  if (isChatMessage(entry)) {
+    return { ...entry };
+  }
+  return isChatSubagent(entry) ? cloneSubagent(entry) : cloneTool(entry);
+}
+
+function cloneSubagent(subagent: ChatSubagent): ChatSubagent {
+  return { ...subagent };
 }
 
 function cloneTool(tool: ChatTool): ChatTool {

@@ -46,13 +46,6 @@ body {
   color: var(--vscode-editorWarning-foreground);
 }
 
-.subagents {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
 .auto-approve-edits {
   display: flex;
   align-items: center;

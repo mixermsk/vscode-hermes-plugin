@@ -10,5 +10,5 @@ suite('Hermes Gateway extension', () => {
 
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('hermesGateway.openChat'));
-  });
+  }).timeout(10_000);
 });

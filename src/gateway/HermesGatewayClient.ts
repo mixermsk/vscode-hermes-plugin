@@ -17,9 +17,8 @@ export interface GatewaySession {
 
 export interface GatewayPromptEvent {
   sessionId: string;
-  type: 'message.delta' | 'message.complete' | 'thinking.delta' | 'reasoning.delta' | 'status.update' | 'session.title';
+  type: 'message.delta' | 'message.complete' | 'thinking.delta' | 'reasoning.delta' | 'status.update';
   text?: string;
-  title?: string;
 }
 
 export interface GatewaySubagentEvent {
@@ -85,13 +84,6 @@ export class HermesGatewayClient {
     return this.parseSession(await this.rpc('session.resume', { session_id: sessionId }));
   }
 
-  public async setSessionTitle(sessionId: string, title: string): Promise<string> {
-    const result = await this.rpc('session.title', { session_id: sessionId, title });
-    if (!isRecord(result) || typeof result.title !== 'string') {
-      throw new Error('Local Hermes Gateway returned an invalid session title.');
-    }
-    return result.title;
-  }
 
   public async submitPrompt(sessionId: string, text: string): Promise<void> {
     if (this.completions.has(sessionId)) {
@@ -266,9 +258,6 @@ function parsePromptEvent(sessionId: string, type: string, payload: unknown): Ga
   }
   if ((type === 'thinking.delta' || type === 'reasoning.delta' || type === 'status.update') && typeof payload.text === 'string') {
     return { sessionId, type, text: payload.text };
-  }
-  if (type === 'session.title' && typeof payload.title === 'string') {
-    return { sessionId, type, title: payload.title };
   }
   return undefined;
 }

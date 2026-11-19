@@ -9,7 +9,10 @@
       "env": {
         "ELECTRON_RUN_AS_NODE": null
       },
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "args": [
+        "--disable-extensions",
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"]
     }
   ]

@@ -12,7 +12,7 @@ suite('ChatViewProvider', () => {
     assert.match(html, /class="chat-layout"/);
     assert.match(html, /id="messages"/);
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="activity"'));
-    assert.ok(html.indexOf('id="subagents"') < html.indexOf('id="messages"'));
+    assert.doesNotMatch(html, /id="subagents"/);
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="form"'));
     assert.match(html, /id="auto-approve-edits"/);
     assert.match(html, /id="prompt"/);
@@ -103,19 +103,26 @@ suite('ChatViewProvider', () => {
     assert.equal(harness.subagentTracking.textContent, 'Subagent tracking: incompatible');
   });
 
-  test('renders display-safe delegated task rows', () => {
+  test('embeds a delegated task in the transcript and updates it in place', () => {
     const harness = createChatHarness(chatScript());
 
-    harness.receive({ type: 'subagents', subagents: [
-      { id: 'child-1', title: 'Delegated task 1 of 2', status: 'running', activity: 'Working' },
-      { id: 'child-2', title: 'Delegated task 2 of 2', status: 'completed', summary: 'Completed' }
-    ] });
+    harness.receive({ type: 'message', role: 'user', text: 'Investigate the failure' });
+    harness.receive({ type: 'subagent', subagent: { subagentId: 'child-1', title: 'Delegated task', status: 'running', activity: 'Working' } });
+    harness.receive({ type: 'message', role: 'agent', text: 'I delegated the investigation.' });
 
-    assert.equal(harness.subagents.hidden, false);
-    assert.deepEqual(harness.subagents.children.map((row) => row.textContent), [
-      'Delegated task 1 of 2Working',
-      'Delegated task 2 of 2Completed'
+    assert.deepEqual(harness.messages.children.map((entry) => ({ className: entry.className, text: entry.textContent })), [
+      { className: 'message user', text: 'Investigate the failure' },
+      { className: 'subagent running', text: 'Delegated taskWorking' },
+      { className: 'message agent', text: 'I delegated the investigation.' }
     ]);
+
+    harness.receive({ type: 'subagent-update', subagent: { subagentId: 'child-1', title: 'Delegated task', status: 'completed', summary: 'Completed' } });
+
+    assert.equal(harness.messages.children.length, 3);
+    assert.deepEqual(
+      { className: harness.messages.children[1].className, text: harness.messages.children[1].textContent },
+      { className: 'subagent completed', text: 'Delegated taskCompleted' }
+    );
   });
 
   test('renders a collapsible tool card and updates its status', () => {
@@ -271,7 +278,6 @@ suite('ChatViewProvider', () => {
       sessionId: 'session-1',
       title: undefined,
       autoApproveEdits: false,
-      subagents: [],
       entries: [
         { role: 'user', text: 'Earlier prompt' },
         {
@@ -316,7 +322,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(preferences, [true]);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, subagents: [], entries: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, entries: [] },
       { type: 'auto-approve-edits', enabled: true }
     ]);
   });
@@ -386,7 +392,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, subagents: [], entries: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, entries: [] },
       { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
       { type: 'activity', text: undefined },
