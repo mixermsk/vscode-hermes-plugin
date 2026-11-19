@@ -3,6 +3,7 @@ const session = document.getElementById('session');
 const activity = document.getElementById('activity');
 const subagentTracking = document.getElementById('subagent-tracking');
 const subagents = document.getElementById('subagents');
+const autoApproveEdits = document.getElementById('auto-approve-edits');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
@@ -177,6 +178,8 @@ function restore(message) {
   setActivity();
   setSubagentTracking(message.subagentTracking);
   setSubagents(message.subagents);
+  autoApproveEdits.checked = Boolean(message.autoApproveEdits);
+  autoApproveEdits.disabled = false;
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.entries) {
     if (entry.toolCallId) {
@@ -229,6 +232,10 @@ prompt.addEventListener('keydown', (event) => {
   sendPrompt();
 });
 
+autoApproveEdits.addEventListener('change', () => {
+  vscode.postMessage({ type: 'auto-approve-edits', enabled: autoApproveEdits.checked });
+});
+
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (message.type === 'restore') {
@@ -255,6 +262,9 @@ window.addEventListener('message', (event) => {
   if (message.type === 'subagents') {
     setSubagents(message.subagents);
   }
+  if (message.type === 'auto-approve-edits') {
+    autoApproveEdits.checked = Boolean(message.enabled);
+  }
 
   if (message.type === 'ready') {
     setPromptRunning(false);
@@ -277,5 +287,7 @@ window.addEventListener('message', (event) => {
     prompt.disabled = true;
     setPromptRunning(false);
     send.disabled = true;
+    autoApproveEdits.checked = false;
+    autoApproveEdits.disabled = true;
   }
 });

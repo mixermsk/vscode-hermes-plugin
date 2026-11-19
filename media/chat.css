@@ -53,6 +53,15 @@ body {
   flex-shrink: 0;
 }
 
+.auto-approve-edits {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
 .subagent {
   display: flex;
   justify-content: space-between;

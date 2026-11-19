@@ -14,6 +14,7 @@ suite('ChatViewProvider', () => {
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="activity"'));
     assert.ok(html.indexOf('id="subagents"') < html.indexOf('id="messages"'));
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="form"'));
+    assert.match(html, /id="auto-approve-edits"/);
     assert.match(html, /id="prompt"/);
     assert.match(html, /<button id="send" type="submit" disabled>Send<\/button>/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
@@ -203,6 +204,20 @@ suite('ChatViewProvider', () => {
     ]);
   });
 
+  test('sends the session-scoped file edit auto-approval preference', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({ type: 'restore', sessionId: 'session-1', title: 'Gateway chat', autoApproveEdits: false, subagents: [], entries: [] });
+    assert.equal(harness.autoApproveEdits.checked, false);
+
+    harness.toggleAutoApproveEdits(true);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'auto-approve-edits', enabled: true }]);
+
+    harness.receive({ type: 'auto-approve-edits', enabled: false });
+    assert.equal(harness.autoApproveEdits.checked, false);
+  });
+
   test('contributes the chat as a Secondary Side Bar view', () => {
     const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
       contributes: { viewsContainers?: Record<string, unknown>; views?: Record<string, unknown> };
@@ -255,6 +270,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: undefined,
+      autoApproveEdits: false,
       subagents: [],
       entries: [
         { role: 'user', text: 'Earlier prompt' },
@@ -266,6 +282,77 @@ suite('ChatViewProvider', () => {
         }
       ]
     }]);
+  });
+
+  test('forwards the session-scoped file edit auto-approval preference to its handler', async () => {
+    const provider = new ChatViewProvider({
+      mediaUri: {} as never,
+      templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
+      stylesheetUri: {} as never,
+      markedUri: {} as never,
+      domPurifyUri: {} as never,
+      scriptUri: {} as never
+    });
+    const posted: unknown[] = [];
+    const preferences: boolean[] = [];
+    let receive: ((message: unknown) => Promise<void>) | undefined;
+    provider.setSession('session-1', async () => {});
+    provider.setAutoApproveEditsHandler(async (enabled) => { preferences.push(enabled); });
+
+    provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-webview://chat',
+        asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
+        async postMessage(message: unknown) { posted.push(message); return true; },
+        onDidReceiveMessage(handler: (message: unknown) => Promise<void>) {
+          receive = handler;
+          return { dispose() {} };
+        }
+      }
+    } as never);
+
+    assert.ok(receive, 'expected the webview to register an auto-approval handler');
+    await receive({ type: 'auto-approve-edits', enabled: true });
+
+    assert.deepEqual(preferences, [true]);
+    assert.deepEqual(posted, [
+      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, subagents: [], entries: [] },
+      { type: 'auto-approve-edits', enabled: true }
+    ]);
+  });
+
+  test('ignores a late thinking update after the prompt has completed', async () => {
+    const provider = new ChatViewProvider({
+      mediaUri: {} as never,
+      templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
+      stylesheetUri: {} as never,
+      markedUri: {} as never,
+      domPurifyUri: {} as never,
+      scriptUri: {} as never
+    });
+    const posted: unknown[] = [];
+    let receive: ((message: unknown) => Promise<void>) | undefined;
+    provider.setSession('session-1', async () => {});
+
+    provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-webview://chat',
+        asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
+        async postMessage(message: unknown) { posted.push(message); return true; },
+        onDidReceiveMessage(handler: (message: unknown) => Promise<void>) {
+          receive = handler;
+          return { dispose() {} };
+        }
+      }
+    } as never);
+
+    assert.ok(receive, 'expected the webview to register a prompt handler');
+    await receive({ type: 'prompt', text: 'Finish this task' });
+    assert.deepEqual(posted.at(-1), { type: 'ready' });
+
+    provider.setThinking();
+
+    assert.deepEqual(posted.at(-1), { type: 'ready' });
   });
 
   test('forwards a webview prompt to the connected Gateway session', async () => {
@@ -299,7 +386,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, subagents: [], entries: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, autoApproveEdits: false, subagents: [], entries: [] },
       { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
       { type: 'activity', text: undefined },
@@ -342,12 +429,14 @@ function createChatHarness(script: string): {
   activity: FakeElement;
   subagentTracking: FakeElement;
   subagents: FakeElement;
+  autoApproveEdits: FakeElement;
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
   posted: unknown[];
   keydown(key: string, modifiers?: { metaKey?: boolean; shiftKey?: boolean }): { defaultPrevented: boolean };
   submit(): { defaultPrevented: boolean };
+  toggleAutoApproveEdits(enabled: boolean): void;
   receive(message: unknown): void;
 } {
   const elements = new Map<string, FakeElement>([
@@ -355,6 +444,7 @@ function createChatHarness(script: string): {
     ['activity', new FakeElement()],
     ['subagent-tracking', new FakeElement()],
     ['subagents', new FakeElement()],
+    ['auto-approve-edits', new FakeElement()],
     ['messages', new FakeElement()],
     ['form', new FakeElement()],
     ['prompt', new FakeElement()],
@@ -363,6 +453,7 @@ function createChatHarness(script: string): {
   elements.get('activity')!.hidden = true;
   elements.get('subagent-tracking')!.hidden = true;
   elements.get('subagents')!.hidden = true;
+  elements.get('auto-approve-edits')!.disabled = true;
   elements.get('prompt')!.disabled = true;
   elements.get('send')!.disabled = true;
   const posted: unknown[] = [];
@@ -400,6 +491,7 @@ function createChatHarness(script: string): {
     activity: elements.get('activity')!,
     subagentTracking: elements.get('subagent-tracking')!,
     subagents: elements.get('subagents')!,
+    autoApproveEdits: elements.get('auto-approve-edits')!,
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,
@@ -422,6 +514,11 @@ function createChatHarness(script: string): {
       };
       elements.get('form')!.dispatch('submit', event);
       return event;
+    },
+    toggleAutoApproveEdits(enabled: boolean) {
+      const checkbox = elements.get('auto-approve-edits')!;
+      checkbox.checked = enabled;
+      checkbox.dispatch('change', {});
     },
     receive(message: unknown) {
       assert.ok(messageListener, 'expected the webview to register a message listener');

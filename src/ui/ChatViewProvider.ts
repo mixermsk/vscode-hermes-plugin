@@ -6,6 +6,7 @@ export type ChatPromptHandler = (text: string) => Promise<void>;
 export type ChatCancelHandler = () => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
 export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
+export type ChatAutoApproveEditsHandler = (enabled: boolean) => Promise<void>;
 
 export interface ChatMessage {
   role: 'user' | 'agent' | 'error';
@@ -59,6 +60,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private cancelHandler: ChatCancelHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
   private locationHandler: ChatLocationHandler | undefined;
+  private autoApproveEditsHandler: ChatAutoApproveEditsHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
   private subagentTracking: ChatSubagentTrackingStatus | undefined;
@@ -67,6 +69,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
   private activityPosted = false;
+  private autoApproveEdits = false;
   private readonly activeTools = new Map<string, string>();
   private readonly tools = new Map<string, ChatTool>();
 
@@ -95,6 +98,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         } catch (error) {
           const text = error instanceof Error ? error.message : String(error);
           await view.webview.postMessage({ type: 'cancel-error', text });
+        }
+        return;
+      }
+      if (isAutoApproveEditsMessage(message)) {
+        try {
+          await this.autoApproveEditsHandler?.(message.enabled);
+          this.setAutoApproveEdits(message.enabled);
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          await view.webview.postMessage({ type: 'auto-approve-edits', enabled: this.autoApproveEdits });
+          await view.webview.postMessage({ type: 'error', text });
         }
         return;
       }
@@ -137,11 +151,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.locationHandler = handler;
   }
 
+  public setAutoApproveEditsHandler(handler: ChatAutoApproveEditsHandler): void {
+    this.autoApproveEditsHandler = handler;
+  }
+
   public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
+    if (this.sessionId !== sessionId) {
+      this.autoApproveEdits = false;
+    }
     this.sessionId = sessionId;
     this.sessionTitle = title;
     this.promptHandler = handler;
     this.postState();
+  }
+
+  public setAutoApproveEdits(enabled: boolean): void {
+    this.autoApproveEdits = enabled;
+    void this.view?.webview.postMessage({ type: 'auto-approve-edits', enabled });
   }
 
   public setSubagentTrackingStatus(status: ChatSubagentTrackingStatus | undefined): void {
@@ -168,6 +194,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.promptHandler = undefined;
     this.subagentTracking = undefined;
     this.subagents = [];
+    this.autoApproveEdits = false;
     this.promptRunning = false;
     this.entries.length = 0;
     this.tools.clear();
@@ -176,6 +203,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public setThinking(): void {
+    if (!this.promptRunning) {
+      return;
+    }
     this.activity = 'Thinking…';
     this.postActivity();
   }
@@ -273,6 +303,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'restore',
       sessionId: this.sessionId,
       title: this.sessionTitle,
+      autoApproveEdits: this.autoApproveEdits,
       ...(this.subagentTracking === undefined ? {} : { subagentTracking: this.subagentTracking }),
       subagents: this.subagents.map((subagent) => ({ ...subagent })),
       entries: this.entries.map((entry) => isChatMessage(entry) ? { ...entry } : cloneTool(entry))
@@ -335,4 +366,10 @@ function isOpenLocationMessage(value: unknown): value is ChatToolLocation & { ty
 
 function isCancelMessage(value: unknown): value is { type: 'cancel' } {
   return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'cancel';
+}
+
+function isAutoApproveEditsMessage(value: unknown): value is { type: 'auto-approve-edits'; enabled: boolean } {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'auto-approve-edits'
+    && typeof (value as { enabled?: unknown }).enabled === 'boolean';
 }
