@@ -15,7 +15,11 @@
       "isBackground": true,
       "problemMatcher": {
         "owner": "webpack",
-        "pattern": [],
+        "pattern": [
+          {
+            "regexp": "^$"
+          }
+        ],
         "background": {
           "activeOnStart": true,
           "endsPattern": "compiled successfully"
