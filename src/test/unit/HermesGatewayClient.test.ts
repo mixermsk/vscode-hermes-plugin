@@ -21,7 +21,7 @@ class FakeGatewayConnection implements GatewayConnection {
       return { session_id: 'session-1', messages: [{ role: 'user', text: 'Earlier prompt' }], info: { title: 'Gateway chat' } };
     }
     if (method === 'prompt.submit') {
-      return { status: 'streaming' };
+      return { status: 'queued' };
     }
     if (method === 'session.interrupt') {
       return { status: 'interrupted' };
@@ -66,7 +66,14 @@ suite('HermesGatewayClient', () => {
         method: 'session.create',
         params: { source: 'cli', cwd: '/work/project', cwd_explicit: true }
       },
-      { method: 'prompt.submit', params: { session_id: 'session-1', text: 'Inspect the repository', surface: 'vscode' } }
+      {
+        method: 'prompt.submit',
+        params: {
+          session_id: 'session-1',
+          input_id: 'vscode-1',
+          text: 'Inspect the repository'
+        }
+      }
     ]);
     assert.deepEqual(events, [
       { sessionId: 'session-1', type: 'message.delta', text: 'Done' },
@@ -88,5 +95,58 @@ suite('HermesGatewayClient', () => {
     const client = new HermesGatewayClient({ async create() { return connection; } });
 
     await assert.rejects(() => client.connect(), /direct Gateway sessions/);
+  });
+
+  test('can reconnect after event subscription setup fails', async () => {
+    const failedConnection: GatewayConnection = {
+      async rpc(method) {
+        if (method === 'runtime.describe') {
+          return {
+            capabilities: ['durable-admission-v1', 'session-transcript-v1'],
+            session_create: { sources: ['cli'] }
+          };
+        }
+        if (method === 'gateway.capabilities') {
+          return { per_session_exclusive_submit: true };
+        }
+        throw new Error(`Unexpected RPC: ${method}`);
+      },
+      subscribe() { throw new Error('subscription failed'); },
+      close() {}
+    };
+    const connectedConnection = new FakeGatewayConnection();
+    const connections = [failedConnection, connectedConnection];
+    const client = new HermesGatewayClient({
+      async create() {
+        const connection = connections.shift();
+        assert.ok(connection, 'expected a Gateway connection');
+        return connection;
+      }
+    });
+
+    await assert.rejects(() => client.connect(), /subscription failed/);
+    await client.connect();
+    await client.createSession('/work/project');
+
+    assert.equal(connectedConnection.calls.at(-1)?.method, 'session.create');
+  });
+
+  test('interrupts the active prompt with the generation returned by Gateway', async () => {
+    const connection = new FakeGatewayConnection();
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    await client.createSession('/work/project');
+    const prompt = client.submitPrompt('session-1', 'Stop this prompt');
+    await new Promise((resolve) => setImmediate(resolve));
+    connection.emit({ method: 'event', params: { session_id: 'session-1', type: 'session.info', payload: { execution_generation: 7, running: true } } });
+    await client.interrupt('session-1');
+    connection.emit({ method: 'event', params: { session_id: 'session-1', type: 'message.complete', payload: {} } });
+    await prompt;
+
+    assert.deepEqual(connection.calls.at(-1), {
+      method: 'session.interrupt',
+      params: { session_id: 'session-1', execution_generation: 7 }
+    });
   });
 });

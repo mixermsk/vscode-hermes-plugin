@@ -40,6 +40,8 @@ export class HermesGatewayClient {
   private eventSubscription: Subscription | undefined;
   private readonly listeners = new Set<GatewayEventListener>();
   private readonly completions = new Map<string, Deferred<void>>();
+  private readonly executionGenerations = new Map<string, number>();
+  private nextInputId = 1;
 
   public constructor(private readonly connectionFactory: GatewayConnectionFactory) {}
 
@@ -57,8 +59,9 @@ export class HermesGatewayClient {
       if (!isRecord(capabilities) || capabilities.per_session_exclusive_submit !== true) {
         throw new Error('Local Hermes Gateway does not support exclusive prompt submission.');
       }
+      const eventSubscription = connection.subscribe((event) => this.handleEvent(event));
       this.connection = connection;
-      this.eventSubscription = connection.subscribe((event) => this.handleEvent(event));
+      this.eventSubscription = eventSubscription;
     } catch (error) {
       connection.close();
       throw error;
@@ -89,18 +92,30 @@ export class HermesGatewayClient {
     const completion = deferred<void>();
     this.completions.set(sessionId, completion);
     try {
-      const result = await this.rpc('prompt.submit', { session_id: sessionId, text, surface: 'vscode' });
+      const result = await this.rpc('prompt.submit', {
+        session_id: sessionId,
+        input_id: `vscode-${this.nextInputId++}`,
+        text
+      });
       if (!isRecord(result) || (result.status !== 'streaming' && result.status !== 'queued')) {
         throw new Error('Local Hermes Gateway did not accept the prompt.');
+      }
+      if (typeof result.execution_generation === 'number' && Number.isInteger(result.execution_generation)) {
+        this.executionGenerations.set(sessionId, result.execution_generation);
       }
       await completion.promise;
     } finally {
       this.completions.delete(sessionId);
+      this.executionGenerations.delete(sessionId);
     }
   }
 
   public async interrupt(sessionId: string): Promise<void> {
-    await this.rpc('session.interrupt', { session_id: sessionId });
+    const executionGeneration = this.executionGenerations.get(sessionId);
+    await this.rpc('session.interrupt', {
+      session_id: sessionId,
+      ...(executionGeneration === undefined ? {} : { execution_generation: executionGeneration })
+    });
   }
 
   public async getSubagents(sessionId: string): Promise<unknown> {
@@ -135,6 +150,7 @@ export class HermesGatewayClient {
       completion.resolve();
     }
     this.completions.clear();
+    this.executionGenerations.clear();
     this.eventSubscription?.dispose();
     this.eventSubscription = undefined;
     this.connection?.close();
@@ -167,6 +183,10 @@ export class HermesGatewayClient {
       return;
     }
     const { session_id: sessionId, type, payload } = value.params;
+    if (type === 'session.info' && this.completions.has(sessionId) && isRecord(payload)
+      && typeof payload.execution_generation === 'number' && Number.isInteger(payload.execution_generation)) {
+      this.executionGenerations.set(sessionId, payload.execution_generation);
+    }
     const promptEvent = parsePromptEvent(sessionId, type, payload);
     if (promptEvent !== undefined) {
       if (promptEvent.type === 'message.complete') {
