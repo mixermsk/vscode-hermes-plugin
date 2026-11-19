@@ -26,3 +26,27 @@ npm test
 ```
 
 Press F5 in VS Code to launch an Extension Development Host.
+
+## Build and install (permanent, no F5)
+
+`npm run vsix` builds a production bundle and packages it into `hermes-gateway-0.0.1.vsix`. Install that file once and the extension loads on every VS Code start — no Extension Development Host needed.
+
+```sh
+npm run vsix
+```
+
+Install the produced `.vsix` either way:
+
+- **GUI:** Extensions view (`Cmd+Shift+X`) → `...` → `Install from VSIX...` → pick `hermes-gateway-0.0.1.vsix`.
+- **CLI:** `code --install-extension hermes-gateway-0.0.1.vsix`. If `code` is not on PATH, use the full path: `"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension hermes-gateway-0.0.1.vsix`.
+
+Reload the window (`Cmd+Shift+P` → `Reload Window`); the **Hermes** view then appears automatically in the Secondary Side Bar.
+
+To update after code changes, rebuild and reinstall — the new `.vsix` overwrites the installed one — then reload:
+
+```sh
+npm run vsix
+code --install-extension hermes-gateway-0.0.1.vsix
+```
+
+`*.vsix` and `dist/` are git-ignored, so local builds never enter version control.
