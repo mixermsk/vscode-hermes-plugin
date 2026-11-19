@@ -72,7 +72,9 @@ export type GatewaySlashCommandResult =
 export class HermesGatewayClient {
   private connection: GatewayConnection | undefined;
   private eventSubscription: Subscription | undefined;
+  private disconnectSubscription: Subscription | undefined;
   private readonly listeners = new Set<GatewayEventListener>();
+  private readonly disconnectListeners = new Set<() => void>();
   private readonly completions = new Map<string, Deferred<void>>();
   private readonly executionGenerations = new Map<string, number>();
 
@@ -93,8 +95,10 @@ export class HermesGatewayClient {
         throw new Error('Local Hermes Gateway does not support exclusive prompt submission.');
       }
       const eventSubscription = connection.subscribe((event) => this.handleEvent(event));
+      const disconnectSubscription = connection.onDidDisconnect(() => this.handleDisconnect(connection));
       this.connection = connection;
       this.eventSubscription = eventSubscription;
+      this.disconnectSubscription = disconnectSubscription;
     } catch (error) {
       connection.close();
       throw error;
@@ -104,6 +108,11 @@ export class HermesGatewayClient {
   public onEvent(listener: GatewayEventListener): Subscription {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  public onDisconnect(listener: () => void): Subscription {
+    this.disconnectListeners.add(listener);
+    return { dispose: () => this.disconnectListeners.delete(listener) };
   }
 
   public async createSession(cwd: string): Promise<GatewaySession> {
@@ -269,9 +278,12 @@ export class HermesGatewayClient {
     this.executionGenerations.clear();
     this.eventSubscription?.dispose();
     this.eventSubscription = undefined;
+    this.disconnectSubscription?.dispose();
+    this.disconnectSubscription = undefined;
     this.connection?.close();
     this.connection = undefined;
     this.listeners.clear();
+    this.disconnectListeners.clear();
   }
 
   private async rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -280,6 +292,25 @@ export class HermesGatewayClient {
       throw new Error('Local Hermes Gateway is not connected.');
     }
     return connection.rpc(method, params);
+  }
+
+  private handleDisconnect(connection: GatewayConnection): void {
+    if (this.connection !== connection) {
+      return;
+    }
+    this.connection = undefined;
+    this.eventSubscription?.dispose();
+    this.eventSubscription = undefined;
+    this.disconnectSubscription?.dispose();
+    this.disconnectSubscription = undefined;
+    for (const completion of this.completions.values()) {
+      completion.reject(new Error('Local Hermes Gateway disconnected.'));
+    }
+    this.completions.clear();
+    this.executionGenerations.clear();
+    for (const listener of this.disconnectListeners) {
+      listener();
+    }
   }
 
   private parseSession(value: unknown): GatewaySession {
@@ -539,10 +570,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
+  reject(reason?: unknown): void;
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
-  return { promise, resolve };
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

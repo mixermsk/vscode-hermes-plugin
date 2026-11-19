@@ -37,6 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registry
   );
   let connection: Promise<void> | undefined;
+  let reconnectTimer: NodeJS.Timeout | undefined;
   let activeSessionId: string | undefined;
   let activeSessionTitle: string | undefined;
   let autoApproveEditSessionId: string | undefined;
@@ -285,6 +286,25 @@ export function activate(context: vscode.ExtensionContext): void {
     return connection;
   };
 
+  const scheduleReconnect = (): void => {
+    if (reconnectTimer !== undefined) {
+      return;
+    }
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void connect().catch(() => scheduleReconnect());
+    }, 1_000);
+  };
+  const gatewayDisconnectSubscription = gateway.onDisconnect(() => {
+    connection = undefined;
+    activeSessionId = undefined;
+    activeSessionTitle = undefined;
+    autoApproveEditSessionId = undefined;
+    subagents.clear();
+    chatProvider.setDisconnected('Local Hermes Gateway disconnected. Reconnecting…');
+    scheduleReconnect();
+  });
+
   chatProvider.setConnectionHandler(connect);
   chatProvider.setCancelHandler(async () => {
     if (activeSessionId === undefined) {
@@ -376,6 +396,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     openChatCommand,
     pickSessionCommand,
+    gatewayDisconnectSubscription,
+    {
+      dispose: () => {
+        if (reconnectTimer !== undefined) {
+          clearTimeout(reconnectTimer);
+        }
+      }
+    },
     { dispose: () => gateway.dispose() }
   );
 }

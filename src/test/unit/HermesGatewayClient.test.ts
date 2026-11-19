@@ -9,6 +9,7 @@ class FakeGatewayConnection implements GatewayConnection {
   public mutateResult: ((payload: Record<string, unknown>) => unknown) | undefined;
   public slashResult: unknown = { output: 'Command completed.' };
   private listener: ((event: unknown) => void) | undefined;
+  private disconnectListener: (() => void) | undefined;
 
   public async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push({ method, params });
@@ -57,9 +58,16 @@ class FakeGatewayConnection implements GatewayConnection {
     return { dispose: () => { this.listener = undefined; } };
   }
 
+  public onDidDisconnect(listener: () => void): { dispose(): void } {
+    this.disconnectListener = listener;
+    return { dispose: () => { this.disconnectListener = undefined; } };
+  }
+
   public close(): void {}
 
   public emit(event: unknown): void { this.listener?.(event); }
+
+  public disconnect(): void { this.disconnectListener?.(); }
 }
 
 suite('HermesGatewayClient', () => {
@@ -114,6 +122,7 @@ suite('HermesGatewayClient', () => {
         throw new Error('not used');
       },
       subscribe() { return { dispose() {} }; },
+      onDidDisconnect() { return { dispose() {} }; },
       close() {}
     };
     const client = new HermesGatewayClient({ async create() { return connection; } });
@@ -136,6 +145,7 @@ suite('HermesGatewayClient', () => {
         throw new Error(`Unexpected RPC: ${method}`);
       },
       subscribe() { throw new Error('subscription failed'); },
+      onDidDisconnect() { return { dispose() {} }; },
       close() {}
     };
     const connectedConnection = new FakeGatewayConnection();
@@ -153,6 +163,26 @@ suite('HermesGatewayClient', () => {
     await client.createSession('/work/project');
 
     assert.equal(connectedConnection.calls.at(-1)?.method, 'session.create');
+  });
+
+  test('clears a disconnected transport so the next connect creates a new one', async () => {
+    const firstConnection = new FakeGatewayConnection();
+    const secondConnection = new FakeGatewayConnection();
+    const connections = [firstConnection, secondConnection];
+    const client = new HermesGatewayClient({
+      async create() {
+        const connection = connections.shift();
+        assert.ok(connection, 'expected a Gateway connection');
+        return connection;
+      }
+    });
+
+    await client.connect();
+    firstConnection.disconnect();
+    await client.connect();
+    await client.createSession('/work/project');
+
+    assert.equal(secondConnection.calls.at(-1)?.method, 'session.create');
   });
   test('interrupts the active prompt with the generation returned by Gateway', async () => {
     const connection = new FakeGatewayConnection();

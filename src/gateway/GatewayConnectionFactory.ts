@@ -16,6 +16,7 @@ export class GatewayConnectionError extends Error {
 export interface GatewayConnection {
   rpc(method: string, params?: Record<string, unknown>): Promise<unknown>;
   subscribe(listener: (event: unknown) => void): GatewaySubagentSubscription;
+  onDidDisconnect(listener: () => void): GatewaySubagentSubscription;
   close(): void;
 }
 
@@ -74,11 +75,13 @@ class JsonRpcGatewayConnection implements GatewayConnection {
   private nextRequestId = 1;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly listeners = new Set<(event: unknown) => void>();
+  private readonly disconnectListeners = new Set<() => void>();
+  private disconnected = false;
 
   public constructor(private readonly socket: GatewayWebSocket) {
     socket.onmessage = (event) => this.handleMessage(event.data);
-    socket.onerror = () => this.rejectPending();
-    socket.onclose = () => this.rejectPending();
+    socket.onerror = () => this.handleDisconnect();
+    socket.onclose = () => this.handleDisconnect();
   }
 
   public rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -102,6 +105,11 @@ class JsonRpcGatewayConnection implements GatewayConnection {
   public subscribe(listener: (event: unknown) => void): GatewaySubagentSubscription {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  public onDidDisconnect(listener: () => void): GatewaySubagentSubscription {
+    this.disconnectListeners.add(listener);
+    return { dispose: () => this.disconnectListeners.delete(listener) };
   }
 
   public close(): void {
@@ -151,6 +159,17 @@ class JsonRpcGatewayConnection implements GatewayConnection {
       clearTimeout(pending.timer);
       this.pending.delete(id);
       pending.reject(new Error('Local Hermes Gateway disconnected.'));
+    }
+  }
+
+  private handleDisconnect(): void {
+    if (this.disconnected) {
+      return;
+    }
+    this.disconnected = true;
+    this.rejectPending();
+    for (const listener of this.disconnectListeners) {
+      listener();
     }
   }
 }
