@@ -1,10 +1,12 @@
-# Hermes ACP for VS Code
+# Hermes Gateway for VS Code
 
-A standalone VS Code extension that will connect [Hermes Agent](https://hermes-agent.nousresearch.com/) to VS Code through the Agent Client Protocol (ACP).
+A standalone VS Code extension that connects [Hermes Agent](https://hermes-agent.nousresearch.com/) to VS Code through the local Hermes Gateway.
 
 ## Current status
 
-The extension opens a **Hermes** chat view in VS Code's right-hand Secondary Side Bar through the `Hermes ACP: Open Chat` command. It launches Hermes and creates or resumes ACP sessions for the opened repository.
+The extension opens a **Hermes** chat view in VS Code's right-hand Secondary Side Bar through the `Hermes Gateway: Open Chat` command. It attaches to the local Gateway, creates or resumes a repository-scoped session, streams parent responses, displays delegated task lifecycle rows, and presents Gateway approval choices in VS Code.
+
+The extension does not launch or support ACP.
 
 ## Development
 
@@ -12,6 +14,7 @@ Requirements:
 
 - Node.js 22+
 - Visual Studio Code 1.85+
+- A running local Hermes Gateway
 
 ```sh
 npm install
@@ -21,7 +24,3 @@ npm test
 ```
 
 Press F5 in VS Code to launch an Extension Development Host.
-
-## Planned behaviour
-
-The extension will start `hermes acp`, persist a repository-scoped local index of ACP sessions, resume the latest session for the opened repository, and later provide a repository-local session selector.

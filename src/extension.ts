@@ -1,16 +1,18 @@
 import * as vscode from 'vscode';
-import { HermesAgentAdapter } from './adapters/HermesAgentAdapter';
-import { NodeGitCommandRunner, ChildProcessAcpControllerFactory, VsCodeKeyValueStore, VsCodePermissionPresenter } from './vscode/VsCodeAdapters';
-import { PermissionController } from './ui/PermissionController';
+import { NodeGitCommandRunner, VsCodeKeyValueStore } from './vscode/VsCodeAdapters';
 import { SessionRegistry } from './services/SessionRegistry';
-import { HermesSessionService } from './services/HermesSessionService';
+import { GatewaySessionService } from './services/GatewaySessionService';
 import { GitRepositoryResolver } from './services/GitRepositoryResolver';
-import { ChatViewProvider, type ChatTool, type ChatToolContent, type ChatToolLocation } from './ui/ChatViewProvider';
+import { LocalHermesGatewayConnectionFactory } from './gateway/GatewayConnectionFactory';
+import { HermesGatewayClient, type GatewayApproval } from './gateway/HermesGatewayClient';
+import { mergeSubagentSnapshot, parseGatewaySubagentEvent, parseGatewaySubagentList } from './gateway/GatewaySubagentSource';
+import type { SubagentSnapshot } from './domain/Subagent';
+import { ChatViewProvider } from './ui/ChatViewProvider';
 
 const CHAT_VIEW_ID = ChatViewProvider.viewType;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel('Hermes ACP');
+  const output = vscode.window.createOutputChannel('Hermes Gateway');
   const mediaUri = vscode.Uri.joinPath(context.extensionUri, 'media');
   const chatProvider = new ChatViewProvider({
     mediaUri,
@@ -25,124 +27,155 @@ export function activate(context: vscode.ExtensionContext): void {
     const position = new vscode.Position(Math.max(0, (line ?? 1) - 1), 0);
     await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
   });
-  const permissionController = new PermissionController(new VsCodePermissionPresenter());
+
   const registry = new SessionRegistry(new VsCodeKeyValueStore(context.globalState));
+  const gateway = new HermesGatewayClient(new LocalHermesGatewayConnectionFactory());
+  const sessionService = new GatewaySessionService(
+    new GitRepositoryResolver(new NodeGitCommandRunner()),
+    gateway,
+    registry
+  );
   let connection: Promise<void> | undefined;
   let activeSessionId: string | undefined;
-  const controllerFactory = new ChildProcessAcpControllerFactory({
-    onSessionUpdate: async (notification) => {
-      output.appendLine(`session/update: ${notification.update.sessionUpdate}`);
-      if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
-        chatProvider.appendText(notification.update.content.text);
-      }
-      if (notification.update.sessionUpdate === 'user_message_chunk' && notification.update.content.type === 'text') {
-        chatProvider.appendUserText(notification.update.content.text);
-      }
-      if (notification.update.sessionUpdate === 'agent_thought_chunk') {
-        chatProvider.setThinking();
-      }
-      if (notification.update.sessionUpdate === 'tool_call') {
-        chatProvider.startTool(toChatTool(notification.update));
-      }
-      if (notification.update.sessionUpdate === 'tool_call_update') {
-        chatProvider.updateTool(notification.update.toolCallId, toChatToolUpdate(notification.update));
-      }
-      if (notification.update.sessionUpdate === 'session_info_update' && notification.update.title !== undefined) {
-        const title = notification.update.title ?? undefined;
-        await registry.setTitle(notification.sessionId, title);
-        chatProvider.setSessionTitle(notification.sessionId, title);
-      }
+  let activeSessionTitle: string | undefined;
+  let approvalDialogOpen = false;
+  const streamedSessions = new Set<string>();
+  const subagents = new Map<string, SubagentSnapshot>();
 
-    },
-    onPermissionRequest: (request) => permissionController.requestPermission(request),
-    onTransportError: (error) => {
-      const message = error.message;
-      output.appendLine(`Hermes ACP transport failed: ${message}`);
-      connection = undefined;
-      activeSessionId = undefined;
-      permissionController.setWorkspaceEditAutoApproval(undefined);
-      chatProvider.setDisconnected(message);
+  const publishSubagents = (): void => chatProvider.setSubagents([...subagents.values()]);
+  const refreshSubagents = async (sessionId: string): Promise<void> => {
+    const snapshot = parseGatewaySubagentList(await gateway.getSubagents(sessionId));
+    subagents.clear();
+    for (const subagent of snapshot) {
+      subagents.set(subagent.id, subagent);
+    }
+    publishSubagents();
+  };
+  const requestApprovals = async (sessionId: string): Promise<void> => {
+    if (approvalDialogOpen || activeSessionId !== sessionId) {
+      return;
+    }
+    approvalDialogOpen = true;
+    try {
+      const approvals = await gateway.pendingApprovals(sessionId);
+      for (const approval of approvals) {
+        await resolveApproval(gateway, sessionId, approval);
+      }
+    } catch (error) {
+      output.appendLine(`Gateway approval handling failed: ${messageOf(error)}`);
+    } finally {
+      approvalDialogOpen = false;
+    }
+  };
+
+  gateway.onEvent((event) => {
+    if (event.sessionId !== activeSessionId) {
+      return;
+    }
+    if ('payload' in event) {
+      const subagent = parseGatewaySubagentEvent({ type: event.type, payload: event.payload });
+      if (subagent !== undefined) {
+        subagents.set(subagent.id, mergeSubagentSnapshot(subagents.get(subagent.id), subagent));
+        publishSubagents();
+      }
+      return;
+    }
+    if (event.type === 'approval.request') {
+      void requestApprovals(event.sessionId);
+      return;
+    }
+    if (event.type === 'approval.cancelled') {
+      output.appendLine('Gateway cancelled a pending approval.');
+      return;
+    }
+    if (event.type === 'message.delta' && event.text !== undefined) {
+      streamedSessions.add(event.sessionId);
+      chatProvider.appendText(event.text);
+      return;
+    }
+    if (event.type === 'message.complete') {
+      if (!streamedSessions.delete(event.sessionId) && event.text !== undefined) {
+        chatProvider.appendText(event.text);
+      }
+      return;
+    }
+    if (event.type === 'thinking.delta' || event.type === 'reasoning.delta' || event.type === 'status.update') {
+      chatProvider.setThinking();
+      return;
+    }
+    if (event.type === 'session.title' && event.title !== undefined) {
+      activeSessionTitle = event.title;
+      chatProvider.setSessionTitle(event.sessionId, event.title);
+      void registry.setTitle(event.sessionId, event.title);
     }
   });
-  const configuration = vscode.workspace.getConfiguration('hermesAcp');
-  const adapter = new HermesAgentAdapter({
-    executable: configuration.get<string>('executable', 'hermes'),
-    arguments: configuration.get<string[]>('arguments', ['acp']),
-    environment: configuration.get<Record<string, string>>('environment', {})
-  });
-  const sessionService = new HermesSessionService(
-    new GitRepositoryResolver(new NodeGitCommandRunner()),
-    controllerFactory,
-    registry,
-    adapter
-  );
+
   const connect = async (): Promise<void> => {
     if (connection !== undefined) {
       return connection;
     }
     connection = (async () => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (workspaceFolder === undefined) {
-      throw new Error('Hermes ACP requires an opened Git repository.');
-    }
-
-    try {
-      let result = await sessionService.open(workspaceFolder.uri.fsPath);
-      if (result.kind === 'resume-failed') {
-        const action = await vscode.window.showErrorMessage(
-          `Could not resume Hermes session ${result.record.sessionId}.`,
-          'Start New Session'
-        );
-        if (action !== 'Start New Session') {
-          output.appendLine(`Could not resume Hermes session ${result.record.sessionId}. No new session was created.`);
-          return;
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (workspaceFolder === undefined) {
+        throw new Error('Hermes Gateway requires an opened Git repository.');
+      }
+      try {
+        let result = await sessionService.open(workspaceFolder.uri.fsPath);
+        if (result.kind === 'resume-failed') {
+          const action = await vscode.window.showErrorMessage(
+            `Could not resume Hermes session ${result.sessionId}.`,
+            'Start New Session'
+          );
+          if (action !== 'Start New Session') {
+            return;
+          }
+          result = { kind: 'created', session: await sessionService.createNew(workspaceFolder.uri.fsPath) };
         }
-        result = await sessionService.createNew(workspaceFolder.uri.fsPath);
-      }
-      const message = `${result.kind === 'resumed' ? 'Resumed' : 'Created'} Hermes session ${result.sessionId}.`;
-      const controller = sessionService.controller;
-      if (controller !== undefined) {
-        activeSessionId = result.sessionId;
+        activeSessionId = result.session.sessionId;
+        activeSessionTitle = result.session.title;
+        subagents.clear();
         chatProvider.setSession(
-          result.sessionId,
+          activeSessionId,
           async (text) => {
-            output.appendLine(`Sending ${text.length}-character prompt to Hermes session ${result.sessionId}.`);
-            await controller.prompt(result.sessionId, text);
-            await sessionService.persistSession(result.sessionId);
-            output.appendLine(`Hermes prompt completed for session ${result.sessionId}.`);
+            await gateway.submitPrompt(activeSessionId!, text);
+            await sessionService.persistSession(activeSessionId!, activeSessionTitle);
           },
-          result.kind === 'resumed' ? result.title : undefined
+          activeSessionTitle
         );
+        for (const message of result.session.messages) {
+          if (message.role === 'user') {
+            chatProvider.appendUserText(message.text);
+          } else {
+            chatProvider.appendText(message.text);
+          }
+        }
+        chatProvider.setSubagentTrackingStatus({ kind: 'connected', message: 'Gateway connected' });
+        await refreshSubagents(activeSessionId);
+        void requestApprovals(activeSessionId);
+        output.appendLine(`${result.kind === 'resumed' ? 'Resumed' : 'Created'} Gateway session.`);
+      } catch (error) {
+        const message = messageOf(error);
+        output.appendLine(`Gateway connection failed: ${message}`);
+        activeSessionId = undefined;
+        activeSessionTitle = undefined;
+        subagents.clear();
+        chatProvider.setDisconnected(message);
+        connection = undefined;
+        throw error;
       }
-      output.appendLine(message);
-      await vscode.window.showInformationMessage(message);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      output.appendLine(`Connection failed: ${message}`);
-      await vscode.window.showErrorMessage(`Hermes ACP connection failed: ${message}`);
-      connection = undefined;
-      throw error;
-    }
     })();
     return connection;
   };
+
   chatProvider.setConnectionHandler(connect);
   chatProvider.setCancelHandler(async () => {
-    const controller = sessionService.controller;
-    if (controller === undefined || activeSessionId === undefined) {
+    if (activeSessionId === undefined) {
       throw new Error('Hermes is not connected. Reopen the chat and try again.');
     }
-    output.appendLine(`Cancelling Hermes prompt for session ${activeSessionId}.`);
-    await controller.cancel(activeSessionId);
+    await gateway.interrupt(activeSessionId);
   });
-  chatProvider.setAcceptEditsHandler(async (enabled) => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (activeSessionId === undefined || workspaceFolder === undefined) {
-      throw new Error('Hermes is not connected. Reopen the chat and try again.');
-    }
-    permissionController.setWorkspaceEditAutoApproval(enabled ? workspaceFolder.uri.fsPath : undefined);
-  });
-  const openChatCommand = vscode.commands.registerCommand('hermesAcp.openChat', async () => {
+
+  const openChatCommand = vscode.commands.registerCommand('hermesGateway.openChat', async () => {
     await vscode.commands.executeCommand(`${CHAT_VIEW_ID}.focus`);
     await connect();
   });
@@ -152,83 +185,30 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
       webviewOptions: { retainContextWhenHidden: true }
     }),
-    openChatCommand
+    openChatCommand,
+    { dispose: () => gateway.dispose() }
   );
 }
 
 export function deactivate(): void {}
 
-function toChatTool(update: Readonly<{
-  toolCallId: string;
-  title: string;
-  name?: string | null;
-  kind?: string | null;
-  status?: string | null;
-  content?: unknown;
-  locations?: unknown;
-}>): ChatTool {
-  return {
-    toolCallId: update.toolCallId,
-    title: update.title,
-    ...(update.name == null ? {} : { name: update.name }),
-    ...(update.kind == null ? {} : { kind: update.kind }),
-    ...(update.status == null ? { status: 'in_progress' } : { status: update.status }),
-    ...(update.content === undefined ? {} : { content: normalizeToolContent(update.content) }),
-    ...(update.locations === undefined ? {} : { locations: normalizeToolLocations(update.locations) })
-  };
-}
-
-function toChatToolUpdate(update: Readonly<{
-  title?: string | null;
-  name?: string | null;
-  kind?: string | null;
-  status?: string | null;
-  content?: unknown;
-  locations?: unknown;
-}>): Partial<ChatTool> {
-  return {
-    ...(update.title == null ? {} : { title: update.title }),
-    ...(update.name == null ? {} : { name: update.name }),
-    ...(update.kind == null ? {} : { kind: update.kind }),
-    ...(update.status == null ? {} : { status: update.status }),
-    ...(update.content === undefined ? {} : { content: normalizeToolContent(update.content) }),
-    ...(update.locations === undefined ? {} : { locations: normalizeToolLocations(update.locations) })
-  };
-}
-
-function normalizeToolContent(value: unknown): readonly ChatToolContent[] {
-  if (!Array.isArray(value)) {
-    return [];
+async function resolveApproval(gateway: HermesGatewayClient, sessionId: string, approval: GatewayApproval): Promise<void> {
+  const choice = await vscode.window.showWarningMessage(
+    approval.description ?? `${approval.toolName ?? 'Hermes'} requests approval.`,
+    { modal: true },
+    ...approval.choices
+  );
+  const selected = choice ?? 'deny';
+  if (!approval.choices.includes(selected)) {
+    return;
   }
-  return value.flatMap((item): ChatToolContent[] => {
-    if (!isRecord(item) || typeof item.type !== 'string') {
-      return [];
-    }
-    if (item.type === 'content' && isRecord(item.content) && item.content.type === 'text' && typeof item.content.text === 'string') {
-      return [{ type: 'text', text: item.content.text }];
-    }
-    if (item.type === 'diff' && typeof item.path === 'string' && typeof item.newText === 'string') {
-      return [{ type: 'diff', path: item.path, ...(typeof item.oldText === 'string' ? { oldText: item.oldText } : {}), newText: item.newText }];
-    }
-    if (item.type === 'terminal' && typeof item.terminalId === 'string') {
-      return [{ type: 'terminal', terminalId: item.terminalId }];
-    }
-    return [];
-  });
-}
-
-function normalizeToolLocations(value: unknown): readonly ChatToolLocation[] {
-  if (!Array.isArray(value)) {
-    return [];
+  await gateway.respondApproval(sessionId, approval.requestId, selected);
+  const remaining = await gateway.pendingApprovals(sessionId);
+  if (remaining.some((pending) => pending.requestId === approval.requestId)) {
+    throw new Error('Local Hermes Gateway did not resolve the approval.');
   }
-  return value.flatMap((item): ChatToolLocation[] => {
-    if (!isRecord(item) || typeof item.path !== 'string') {
-      return [];
-    }
-    return [{ path: item.path, ...(typeof item.line === 'number' ? { line: item.line } : {}) }];
-  });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

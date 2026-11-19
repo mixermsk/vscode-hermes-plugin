@@ -9,10 +9,11 @@
 <body>
   <main class="chat-layout">
     <div id="session" class="session">Connecting to Hermes…</div>
+    <div id="subagent-tracking" class="subagent-tracking" role="status" hidden></div>
+    <section id="subagents" class="subagents" aria-label="Delegated tasks" hidden></section>
     <div id="messages" class="messages" role="log" aria-live="polite">
       <div id="activity" class="activity" role="status" hidden></div>
     </div>
-    <label class="accept-edits"><input id="accept-edits" type="checkbox" disabled> Accept Edits</label>
     <form id="form" class="composer">
       <textarea id="prompt" rows="4" placeholder="Ask Hermes…" aria-label="Message to Hermes" disabled></textarea>
       <button id="send" type="submit" disabled>Send</button>

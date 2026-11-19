@@ -1,7 +1,8 @@
 const vscode = acquireVsCodeApi();
 const session = document.getElementById('session');
-const acceptEdits = document.getElementById('accept-edits');
 const activity = document.getElementById('activity');
+const subagentTracking = document.getElementById('subagent-tracking');
+const subagents = document.getElementById('subagents');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
@@ -132,15 +133,34 @@ function setActivity(text) {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function setSubagentTracking(status) {
+  subagentTracking.hidden = !status;
+  subagentTracking.className = `subagent-tracking${status ? ` ${status.kind}` : ''}`;
+  subagentTracking.textContent = status?.message ?? '';
+}
+
+function setSubagents(items) {
+  subagents.replaceChildren();
+  subagents.hidden = !items || items.length === 0;
+  for (const item of items ?? []) {
+    const row = document.createElement('div');
+    row.className = `subagent ${item.status}`;
+    const label = document.createElement('span');
+    label.className = 'subagent-label';
+    label.textContent = item.title;
+    const state = document.createElement('span');
+    state.className = 'subagent-state';
+    state.textContent = item.summary ?? item.activity ?? item.status;
+    row.appendChild(label);
+    row.appendChild(state);
+    subagents.appendChild(row);
+  }
+}
+
 function moveActivityToEnd() {
   if (!activity.hidden) {
     messages.appendChild(activity);
   }
-}
-
-function setAcceptEdits(enabled, disabled = false) {
-  acceptEdits.checked = enabled;
-  acceptEdits.disabled = disabled;
 }
 
 function setPromptRunning(running) {
@@ -155,7 +175,8 @@ function restore(message) {
   activeAgentText = '';
   toolElements.clear();
   setActivity();
-  setAcceptEdits(message.acceptEdits, false);
+  setSubagentTracking(message.subagentTracking);
+  setSubagents(message.subagents);
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.entries) {
     if (entry.toolCallId) {
@@ -208,11 +229,6 @@ prompt.addEventListener('keydown', (event) => {
   sendPrompt();
 });
 
-acceptEdits.addEventListener('change', () => {
-  acceptEdits.disabled = true;
-  vscode.postMessage({ type: 'set-accept-edits', enabled: acceptEdits.checked });
-});
-
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (message.type === 'restore') {
@@ -233,9 +249,13 @@ window.addEventListener('message', (event) => {
   if (message.type === 'activity') {
     setActivity(message.text);
   }
-  if (message.type === 'accept-edits') {
-    setAcceptEdits(message.enabled, false);
+  if (message.type === 'subagent-tracking') {
+    setSubagentTracking(message.status);
   }
+  if (message.type === 'subagents') {
+    setSubagents(message.subagents);
+  }
+
   if (message.type === 'ready') {
     setPromptRunning(false);
     send.disabled = false;
@@ -251,7 +271,8 @@ window.addEventListener('message', (event) => {
   if (message.type === 'disconnected') {
     activeAgentMessage = undefined;
     setActivity();
-    setAcceptEdits(false, true);
+    setSubagentTracking();
+    setSubagents();
     session.textContent = `Disconnected: ${message.text}`;
     prompt.disabled = true;
     setPromptRunning(false);

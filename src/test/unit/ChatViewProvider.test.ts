@@ -12,9 +12,8 @@ suite('ChatViewProvider', () => {
     assert.match(html, /class="chat-layout"/);
     assert.match(html, /id="messages"/);
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="activity"'));
-    assert.ok(html.indexOf('id="activity"') < html.indexOf('id="accept-edits"'));
-    assert.ok(html.indexOf('id="messages"') < html.indexOf('id="accept-edits"'));
-    assert.ok(html.indexOf('id="accept-edits"') < html.indexOf('id="form"'));
+    assert.ok(html.indexOf('id="subagents"') < html.indexOf('id="messages"'));
+    assert.ok(html.indexOf('id="messages"') < html.indexOf('id="form"'));
     assert.match(html, /id="prompt"/);
     assert.match(html, /<button id="send" type="submit" disabled>Send<\/button>/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
@@ -61,7 +60,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: 'Refactor chat transport',
-      acceptEdits: false,
+      subagents: [],
       entries: [
         { role: 'user', text: 'Hello' },
         { role: 'agent', text: 'Hi there' }
@@ -69,7 +68,6 @@ suite('ChatViewProvider', () => {
     });
 
     assert.equal(harness.session.textContent, 'Session: Refactor chat transport (session-1)');
-    assert.equal(harness.acceptEdits.checked, false);
     assert.equal(harness.prompt.disabled, false);
     assert.equal(harness.send.disabled, false);
     assert.deepEqual(
@@ -95,22 +93,28 @@ suite('ChatViewProvider', () => {
     assert.equal(harness.messages.children.at(-1), harness.activity);
   });
 
-  test('restores and changes the Accept Edits toggle', () => {
+  test('renders a non-blocking Gateway tracking availability status', () => {
     const harness = createChatHarness(chatScript());
 
-    harness.receive({ type: 'restore', sessionId: 'session-1', acceptEdits: true, entries: [] });
-    assert.equal(harness.acceptEdits.checked, true);
-    assert.equal(harness.acceptEdits.disabled, false);
+    harness.receive({ type: 'subagent-tracking', status: { kind: 'incompatible', message: 'Subagent tracking: incompatible' } });
 
-    harness.acceptEdits.checked = false;
-    harness.acceptEdits.dispatch('change', {});
+    assert.equal(harness.subagentTracking.hidden, false);
+    assert.equal(harness.subagentTracking.textContent, 'Subagent tracking: incompatible');
+  });
 
-    assert.equal(harness.acceptEdits.disabled, true);
-    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [{ type: 'set-accept-edits', enabled: false }]);
+  test('renders display-safe delegated task rows', () => {
+    const harness = createChatHarness(chatScript());
 
-    harness.receive({ type: 'accept-edits', enabled: false });
-    assert.equal(harness.acceptEdits.checked, false);
-    assert.equal(harness.acceptEdits.disabled, false);
+    harness.receive({ type: 'subagents', subagents: [
+      { id: 'child-1', title: 'Delegated task 1 of 2', status: 'running', activity: 'Working' },
+      { id: 'child-2', title: 'Delegated task 2 of 2', status: 'completed', summary: 'Completed' }
+    ] });
+
+    assert.equal(harness.subagents.hidden, false);
+    assert.deepEqual(harness.subagents.children.map((row) => row.textContent), [
+      'Delegated task 1 of 2Working',
+      'Delegated task 2 of 2Completed'
+    ]);
   });
 
   test('renders a collapsible tool card and updates its status', () => {
@@ -205,16 +209,17 @@ suite('ChatViewProvider', () => {
     };
 
     assert.deepEqual(manifest.contributes.viewsContainers?.secondarySidebar, [{
-      id: 'hermes-acp',
+      id: 'hermes-gateway',
       title: 'Hermes',
       icon: 'resources/hermes.svg'
     }]);
-    assert.deepEqual(manifest.contributes.views?.['hermes-acp'], [{
-      id: 'hermesAcp.chat',
+    assert.deepEqual(manifest.contributes.views?.['hermes-gateway'], [{
+      id: 'hermesGateway.chat',
       name: 'Chat',
       type: 'webview'
     }]);
   });
+
 
   test('delivers a session set before the side bar view resolves', async () => {
     const provider = new ChatViewProvider({
@@ -250,7 +255,7 @@ suite('ChatViewProvider', () => {
       type: 'restore',
       sessionId: 'session-1',
       title: undefined,
-      acceptEdits: false,
+      subagents: [],
       entries: [
         { role: 'user', text: 'Earlier prompt' },
         {
@@ -263,7 +268,7 @@ suite('ChatViewProvider', () => {
     }]);
   });
 
-  test('forwards a webview prompt to the connected ACP session', async () => {
+  test('forwards a webview prompt to the connected Gateway session', async () => {
     const provider = new ChatViewProvider({
       mediaUri: {} as never,
       templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
@@ -294,7 +299,7 @@ suite('ChatViewProvider', () => {
 
     assert.deepEqual(prompts, ['Inspect the session']);
     assert.deepEqual(posted, [
-      { type: 'restore', sessionId: 'session-1', title: undefined, acceptEdits: false, entries: [] },
+      { type: 'restore', sessionId: 'session-1', title: undefined, subagents: [], entries: [] },
       { type: 'activity', text: 'Working…' },
       { type: 'message', role: 'user', text: 'Inspect the session' },
       { type: 'activity', text: undefined },
@@ -334,8 +339,9 @@ function webviewResources(): {
 
 function createChatHarness(script: string): {
   session: FakeElement;
-  acceptEdits: FakeElement;
   activity: FakeElement;
+  subagentTracking: FakeElement;
+  subagents: FakeElement;
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
@@ -346,14 +352,17 @@ function createChatHarness(script: string): {
 } {
   const elements = new Map<string, FakeElement>([
     ['session', new FakeElement()],
-    ['accept-edits', new FakeElement()],
     ['activity', new FakeElement()],
+    ['subagent-tracking', new FakeElement()],
+    ['subagents', new FakeElement()],
     ['messages', new FakeElement()],
     ['form', new FakeElement()],
     ['prompt', new FakeElement()],
     ['send', new FakeElement()]
   ]);
   elements.get('activity')!.hidden = true;
+  elements.get('subagent-tracking')!.hidden = true;
+  elements.get('subagents')!.hidden = true;
   elements.get('prompt')!.disabled = true;
   elements.get('send')!.disabled = true;
   const posted: unknown[] = [];
@@ -388,8 +397,9 @@ function createChatHarness(script: string): {
 
   return {
     session: elements.get('session')!,
-    acceptEdits: elements.get('accept-edits')!,
     activity: elements.get('activity')!,
+    subagentTracking: elements.get('subagent-tracking')!,
+    subagents: elements.get('subagents')!,
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,

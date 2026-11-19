@@ -1,7 +1,7 @@
 {
-  "name": "hermes-acp",
-  "displayName": "Hermes ACP",
-  "description": "Hermes Agent client for VS Code via Agent Client Protocol",
+  "name": "hermes-gateway",
+  "displayName": "Hermes Gateway",
+  "description": "Hermes Agent client for VS Code via the local Hermes Gateway",
   "version": "0.0.1",
   "publisher": "mixermsk",
   "license": "MIT",
@@ -17,55 +17,27 @@
   "contributes": {
     "commands": [
       {
-        "command": "hermesAcp.openChat",
-        "title": "Hermes ACP: Open Chat"
+        "command": "hermesGateway.openChat",
+        "title": "Hermes Gateway: Open Chat"
       }
     ],
     "viewsContainers": {
       "secondarySidebar": [
         {
-          "id": "hermes-acp",
+          "id": "hermes-gateway",
           "title": "Hermes",
           "icon": "resources/hermes.svg"
         }
       ]
     },
     "views": {
-      "hermes-acp": [
+      "hermes-gateway": [
         {
-          "id": "hermesAcp.chat",
+          "id": "hermesGateway.chat",
           "name": "Chat",
           "type": "webview"
         }
       ]
-    },
-    "configuration": {
-      "title": "Hermes ACP",
-      "properties": {
-        "hermesAcp.executable": {
-          "type": "string",
-          "default": "hermes",
-          "description": "Path or command used to launch Hermes Agent."
-        },
-        "hermesAcp.arguments": {
-          "type": "array",
-          "default": [
-            "acp"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "Arguments passed to the Hermes executable."
-        },
-        "hermesAcp.environment": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Additional environment variables passed to Hermes. Do not store credentials here."
-        }
-      }
     }
   },
   "scripts": {
@@ -74,7 +46,7 @@
     "watch": "webpack --watch --mode development",
     "package": "npm run build:webview && webpack --mode production",
     "vsix": "npm run package && vsce package --no-dependencies --allow-missing-repository",
-    "compile-tests": "tsc -p tsconfig.test.json",
+    "compile-tests": "node -e \"require('node:fs').rmSync('out/test', { recursive: true, force: true })\" && tsc -p tsconfig.test.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:unit": "npm run compile-tests && mocha out/test/unit/**/*.test.js --ui tdd",
     "lint": "eslint src --max-warnings 0",
@@ -96,7 +68,6 @@
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.8.0",
     "dompurify": "^3.4.17",
     "marked": "^18.1.0"
   }

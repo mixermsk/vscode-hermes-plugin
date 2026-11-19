@@ -5,7 +5,7 @@ export interface KeyValueStore {
   update(key: string, value: unknown): Promise<void>;
 }
 
-const SESSION_RECORDS_KEY = 'hermesAcp.sessionRecords.v1';
+const SESSION_RECORDS_KEY = 'hermesGateway.sessionRecords.v1';
 const DEFAULT_MAX_RECORDS_PER_REPOSITORY = 50;
 
 export class SessionRegistry {

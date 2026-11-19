@@ -1,14 +1,14 @@
 import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 
-suite('Hermes ACP extension', () => {
+suite('Hermes Gateway extension', () => {
   test('registers the Open Chat command when activated', async () => {
-    const extension = vscode.extensions.getExtension('mixermsk.hermes-acp');
+    const extension = vscode.extensions.getExtension('mixermsk.hermes-gateway');
 
-    assert.ok(extension, 'Hermes ACP extension should be discoverable');
+    assert.ok(extension, 'Hermes Gateway extension should be discoverable');
     await extension.activate();
 
     const commands = await vscode.commands.getCommands(true);
-    assert.ok(commands.includes('hermesAcp.openChat'));
+    assert.ok(commands.includes('hermesGateway.openChat'));
   });
 });

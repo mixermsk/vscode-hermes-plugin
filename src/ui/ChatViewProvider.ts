@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 import type * as vscode from 'vscode';
+import type { SubagentSnapshot } from '../domain/Subagent';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
 export type ChatCancelHandler = () => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
 export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
-export type ChatAcceptEditsHandler = (enabled: boolean) => Promise<void>;
 
 export interface ChatMessage {
   role: 'user' | 'agent' | 'error';
@@ -36,6 +36,11 @@ export interface ChatTool {
   locations?: readonly ChatToolLocation[];
 }
 
+export interface ChatSubagentTrackingStatus {
+  kind: 'connected' | 'unavailable' | 'incompatible' | 'unauthorized';
+  message: string;
+}
+
 export type ChatTranscriptEntry = ChatMessage | ChatTool;
 
 export interface ChatViewAssets {
@@ -48,16 +53,16 @@ export interface ChatViewAssets {
 }
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'hermesAcp.chat';
+  public static readonly viewType = 'hermesGateway.chat';
   private view: vscode.WebviewView | undefined;
   private promptHandler: ChatPromptHandler | undefined;
   private cancelHandler: ChatCancelHandler | undefined;
   private connectionHandler: ChatConnectionHandler | undefined;
   private locationHandler: ChatLocationHandler | undefined;
-  private acceptEditsHandler: ChatAcceptEditsHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
-  private acceptEdits = false;
+  private subagentTracking: ChatSubagentTrackingStatus | undefined;
+  private subagents: readonly SubagentSnapshot[] = [];
   private promptRunning = false;
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
@@ -79,22 +84,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.locationHandler?.(message);
         return;
       }
-      if (isSetAcceptEditsMessage(message)) {
-        const handler = this.acceptEditsHandler;
-        if (handler === undefined) {
-          await view.webview.postMessage({ type: 'accept-edits', enabled: this.acceptEdits });
-          return;
-        }
-        try {
-          await handler(message.enabled);
-          this.setAcceptEdits(message.enabled);
-        } catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          await view.webview.postMessage({ type: 'error', text });
-          await view.webview.postMessage({ type: 'accept-edits', enabled: this.acceptEdits });
-        }
-        return;
-      }
+
       if (isCancelMessage(message)) {
         if (!this.promptRunning || this.cancelHandler === undefined) {
           return;
@@ -147,21 +137,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.locationHandler = handler;
   }
 
-  public setAcceptEditsHandler(handler: ChatAcceptEditsHandler): void {
-    this.acceptEditsHandler = handler;
-  }
-
-  public setSession(sessionId: string, handler: ChatPromptHandler, title?: string, acceptEdits = false): void {
+  public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
     this.sessionId = sessionId;
     this.sessionTitle = title;
     this.promptHandler = handler;
-    this.acceptEdits = acceptEdits;
     this.postState();
   }
 
-  public setAcceptEdits(enabled: boolean): void {
-    this.acceptEdits = enabled;
-    void this.view?.webview.postMessage({ type: 'accept-edits', enabled });
+  public setSubagentTrackingStatus(status: ChatSubagentTrackingStatus | undefined): void {
+    this.subagentTracking = status;
+    void this.view?.webview.postMessage({ type: 'subagent-tracking', status });
+  }
+
+  public setSubagents(subagents: readonly SubagentSnapshot[]): void {
+    this.subagents = subagents.map((subagent) => ({ ...subagent }));
+    void this.view?.webview.postMessage({ type: 'subagents', subagents: this.subagents });
   }
 
   public setSessionTitle(sessionId: string, title: string | undefined): void {
@@ -176,7 +166,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.sessionId = undefined;
     this.sessionTitle = undefined;
     this.promptHandler = undefined;
-    this.acceptEdits = false;
+    this.subagentTracking = undefined;
+    this.subagents = [];
     this.promptRunning = false;
     this.entries.length = 0;
     this.tools.clear();
@@ -282,7 +273,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'restore',
       sessionId: this.sessionId,
       title: this.sessionTitle,
-      acceptEdits: this.acceptEdits,
+      ...(this.subagentTracking === undefined ? {} : { subagentTracking: this.subagentTracking }),
+      subagents: this.subagents.map((subagent) => ({ ...subagent })),
       entries: this.entries.map((entry) => isChatMessage(entry) ? { ...entry } : cloneTool(entry))
     });
     this.postActivity();
@@ -339,12 +331,6 @@ function isOpenLocationMessage(value: unknown): value is ChatToolLocation & { ty
     && (value as { type?: unknown }).type === 'open-location'
     && typeof (value as { path?: unknown }).path === 'string'
     && ((value as { line?: unknown }).line === undefined || typeof (value as { line?: unknown }).line === 'number');
-}
-
-function isSetAcceptEditsMessage(value: unknown): value is { type: 'set-accept-edits'; enabled: boolean } {
-  return typeof value === 'object' && value !== null
-    && (value as { type?: unknown }).type === 'set-accept-edits'
-    && typeof (value as { enabled?: unknown }).enabled === 'boolean';
 }
 
 function isCancelMessage(value: unknown): value is { type: 'cancel' } {
