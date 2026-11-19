@@ -134,7 +134,7 @@ body {
 }
 
 .message.user {
-  background: var(--vscode-button-secondaryBackground);
+  background: #666699;
 }
 
 .message.agent {
