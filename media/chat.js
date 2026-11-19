@@ -7,11 +7,25 @@ const messages = document.getElementById('messages');
 const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
 const send = document.getElementById('send');
+const model = document.getElementById('model');
+const reasoning = document.getElementById('reasoning');
 let activeAgentMessage;
 let activeAgentText = '';
 let promptRunning = false;
+let modelChoices = [];
 const toolElements = new Map();
 const subagentElements = new Map();
+
+const REASONING_LEVELS = [
+  { value: 'none', label: 'Off' },
+  { value: 'minimal', label: 'Minimal' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
+  { value: 'max', label: 'Max' },
+  { value: 'ultra', label: 'Ultra' }
+];
 
 function append(role, text) {
   const message = document.createElement('div');
@@ -185,6 +199,56 @@ function setPromptRunning(running) {
   send.className = running ? 'stop' : '';
 }
 
+function renderModelOptions(options) {
+  modelChoices = [];
+  model.replaceChildren();
+  for (const provider of options.providers ?? []) {
+    for (const name of provider.models ?? []) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      modelChoices.push({ model: name, provider: provider.slug, isCurrent: Boolean(provider.isCurrent) });
+      model.appendChild(option);
+    }
+  }
+  if (options.model) {
+    let index = modelChoices.findIndex((choice) => choice.isCurrent && choice.model === options.model);
+    if (index === -1) {
+      index = modelChoices.findIndex((choice) => choice.model === options.model);
+    }
+    model.selectedIndex = index;
+  }
+  model.disabled = false;
+}
+
+function clearModelOptions() {
+  modelChoices = [];
+  model.replaceChildren();
+  model.selectedIndex = -1;
+  model.disabled = true;
+}
+
+function setReasoning(effort) {
+  reasoning.replaceChildren();
+  const levels = REASONING_LEVELS.some((level) => level.value === effort)
+    ? REASONING_LEVELS
+    : [...REASONING_LEVELS, { value: effort, label: effort }];
+  for (const level of levels) {
+    const option = document.createElement('option');
+    option.value = level.value;
+    option.textContent = level.label;
+    reasoning.appendChild(option);
+  }
+  reasoning.value = effort || 'medium';
+  reasoning.disabled = false;
+}
+
+function clearReasoning() {
+  reasoning.replaceChildren();
+  reasoning.value = '';
+  reasoning.disabled = true;
+}
+
 function restore(message) {
   messages.replaceChildren();
   activeAgentMessage = undefined;
@@ -195,6 +259,12 @@ function restore(message) {
   setSubagentTracking(message.subagentTracking);
   autoApproveEdits.checked = Boolean(message.autoApproveEdits);
   autoApproveEdits.disabled = false;
+  if (message.modelOptions) {
+    renderModelOptions(message.modelOptions);
+  }
+  if (message.reasoning !== undefined) {
+    setReasoning(message.reasoning);
+  }
   session.textContent = `Session: ${message.title ?? 'Untitled session'} (${message.sessionId})`;
   for (const entry of message.entries) {
     if (entry.toolCallId) {
@@ -253,6 +323,18 @@ autoApproveEdits.addEventListener('change', () => {
   vscode.postMessage({ type: 'auto-approve-edits', enabled: autoApproveEdits.checked });
 });
 
+model.addEventListener('change', () => {
+  const choice = modelChoices[model.selectedIndex];
+  if (!choice) {
+    return;
+  }
+  vscode.postMessage({ type: 'select-model', model: choice.model, provider: choice.provider });
+});
+
+reasoning.addEventListener('change', () => {
+  vscode.postMessage({ type: 'select-reasoning', effort: reasoning.value });
+});
+
 window.addEventListener('message', (event) => {
   const message = event.data;
   if (message.type === 'restore') {
@@ -285,6 +367,12 @@ window.addEventListener('message', (event) => {
   if (message.type === 'auto-approve-edits') {
     autoApproveEdits.checked = Boolean(message.enabled);
   }
+  if (message.type === 'model-options') {
+    renderModelOptions(message);
+  }
+  if (message.type === 'reasoning') {
+    setReasoning(message.effort);
+  }
 
   if (message.type === 'ready') {
     setPromptRunning(false);
@@ -309,5 +397,7 @@ window.addEventListener('message', (event) => {
     send.disabled = true;
     autoApproveEdits.checked = false;
     autoApproveEdits.disabled = true;
+    clearModelOptions();
+    clearReasoning();
   }
 });

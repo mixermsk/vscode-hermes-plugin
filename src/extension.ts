@@ -61,6 +61,31 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     publishSubagents();
   };
+  const refreshModelOptions = async (sessionId: string): Promise<void> => {
+    try {
+      chatProvider.setModelOptions(await gateway.getModelOptions(sessionId));
+    } catch (error) {
+      output.appendLine(`Gateway model options failed: ${messageOf(error)}`);
+    }
+  };
+  const refreshReasoning = async (sessionId: string): Promise<void> => {
+    try {
+      chatProvider.setReasoningEffort(await gateway.getReasoning(sessionId));
+    } catch (error) {
+      output.appendLine(`Gateway reasoning read failed: ${messageOf(error)}`);
+    }
+  };
+  const applyModelSelection = async (sessionId: string, model: string, provider: string | undefined, confirm?: string): Promise<void> => {
+    const outcome = await gateway.setModel(sessionId, model, provider, confirm);
+    if (outcome.kind === 'confirmation_required') {
+      const choice = await vscode.window.showWarningMessage(outcome.message, { modal: true }, 'Switch model', 'Cancel');
+      if (choice === 'Switch model') {
+        await applyModelSelection(sessionId, model, provider, outcome.confirm);
+        return;
+      }
+    }
+    await refreshModelOptions(sessionId);
+  };
   const requestApprovals = async (sessionId: string): Promise<void> => {
     if (approvalDialogOpen || activeSessionId !== sessionId) {
       return;
@@ -163,6 +188,8 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         chatProvider.setSubagentTrackingStatus({ kind: 'connected', message: 'Gateway connected' });
         await refreshSubagents(activeSessionId);
+        await refreshModelOptions(activeSessionId);
+        await refreshReasoning(activeSessionId);
         void requestApprovals(activeSessionId);
         output.appendLine(`${result.kind === 'resumed' ? 'Resumed' : 'Created'} Gateway session.`);
       } catch (error) {
@@ -192,6 +219,19 @@ export function activate(context: vscode.ExtensionContext): void {
       throw new Error('Hermes is not connected. Reopen the chat and try again.');
     }
     autoApproveEditSessionId = enabled ? activeSessionId : undefined;
+  });
+  chatProvider.setModelSelectionHandler(async (model, provider) => {
+    if (activeSessionId === undefined) {
+      throw new Error('Hermes is not connected. Reopen the chat and try again.');
+    }
+    await applyModelSelection(activeSessionId, model, provider);
+  });
+  chatProvider.setReasoningSelectionHandler(async (effort) => {
+    if (activeSessionId === undefined) {
+      throw new Error('Hermes is not connected. Reopen the chat and try again.');
+    }
+    await gateway.setReasoning(activeSessionId, effort);
+    chatProvider.setReasoningEffort(effort);
   });
 
   const openChatCommand = vscode.commands.registerCommand('hermesGateway.openChat', async () => {

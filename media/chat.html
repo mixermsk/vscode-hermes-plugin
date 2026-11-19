@@ -10,14 +10,26 @@
   <main class="chat-layout">
     <div id="session" class="session">Connecting to Hermes…</div>
     <div id="subagent-tracking" class="subagent-tracking" role="status" hidden></div>
-    <label class="auto-approve-edits" for="auto-approve-edits">
-      <input id="auto-approve-edits" type="checkbox" disabled>
-      Automatically approve file edits for this Gateway session
-    </label>
     <div id="messages" class="messages" role="log" aria-live="polite">
       <div id="activity" class="activity" role="status" hidden></div>
     </div>
     <form id="form" class="composer">
+      <div class="composer-controls">
+        <label class="auto-approve-edits" for="auto-approve-edits">
+          <input id="auto-approve-edits" type="checkbox" disabled>
+          Approve edits
+        </label>
+        <div class="selectors">
+          <label class="model-picker">
+            <span class="model-picker-label">Model</span>
+            <select id="model" class="model-select" aria-label="Model" disabled></select>
+          </label>
+          <label class="reasoning-picker">
+            <span class="reasoning-picker-label">Reasoning</span>
+            <select id="reasoning" class="reasoning-select" aria-label="Reasoning" disabled></select>
+          </label>
+        </div>
+      </div>
       <textarea id="prompt" rows="4" placeholder="Ask Hermes…" aria-label="Message to Hermes" disabled></textarea>
       <button id="send" type="submit" disabled>Send</button>
     </form>

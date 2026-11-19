@@ -34,6 +34,24 @@ export interface GatewayApprovalEvent {
 
 export type GatewayEventListener = (event: GatewayPromptEvent | GatewaySubagentEvent | GatewayApprovalEvent) => void;
 
+export interface GatewayModelProvider {
+  slug: string;
+  name: string;
+  models: readonly string[];
+  isCurrent?: boolean;
+}
+
+export interface GatewayModelOptions {
+  providers: readonly GatewayModelProvider[];
+  model: string;
+  provider: string;
+}
+
+export type GatewayModelSwitchOutcome =
+  | { kind: 'applied'; model: string; provider: string }
+  | { kind: 'noop'; model: string }
+  | { kind: 'confirmation_required'; confirm: string; model: string; provider: string; message: string };
+
 export class HermesGatewayClient {
   private connection: GatewayConnection | undefined;
   private eventSubscription: Subscription | undefined;
@@ -41,6 +59,7 @@ export class HermesGatewayClient {
   private readonly completions = new Map<string, Deferred<void>>();
   private readonly executionGenerations = new Map<string, number>();
   private nextInputId = 1;
+  private nextMutationId = 1;
 
   public constructor(private readonly connectionFactory: GatewayConnectionFactory) {}
 
@@ -143,6 +162,58 @@ export class HermesGatewayClient {
 
   public async respondApproval(sessionId: string, requestId: string, choice: string): Promise<void> {
     await this.rpc('approval.respond', { session_id: sessionId, request_id: requestId, choice });
+  }
+
+  public async getModelOptions(sessionId: string): Promise<GatewayModelOptions> {
+    return parseModelOptions(await this.rpc('model.options', { session_id: sessionId }));
+  }
+
+  public async setModel(sessionId: string, model: string, provider: string | undefined, confirm?: string): Promise<GatewayModelSwitchOutcome> {
+    const { revision, executionGeneration } = await this.sessionFences(sessionId);
+    const payload: Record<string, unknown> = { model };
+    if (provider !== undefined && provider !== '') {
+      payload.provider = provider;
+    }
+    if (confirm !== undefined) {
+      payload.confirm = confirm;
+    }
+    const result = await this.rpc('session.mutate', {
+      session_id: sessionId,
+      request_id: `vscode-model-${this.nextMutationId++}`,
+      expected_revision: revision,
+      expected_generation: executionGeneration,
+      operation: 'model',
+      payload
+    });
+    return parseModelSwitchOutcome(result);
+  }
+
+  public async getReasoning(sessionId: string): Promise<string> {
+    const result = await this.rpc('config.get', { session_id: sessionId, key: 'reasoning' });
+    if (!isRecord(result) || typeof result.value !== 'string') {
+      throw new Error('Local Hermes Gateway did not report a reasoning level.');
+    }
+    return result.value;
+  }
+
+  public async setReasoning(sessionId: string, effort: string): Promise<void> {
+    const { revision, executionGeneration } = await this.sessionFences(sessionId);
+    await this.rpc('session.mutate', {
+      session_id: sessionId,
+      request_id: `vscode-reasoning-${this.nextMutationId++}`,
+      expected_revision: revision,
+      expected_generation: executionGeneration,
+      operation: 'reasoning',
+      payload: { effort }
+    });
+  }
+
+  private async sessionFences(sessionId: string): Promise<{ revision: number; executionGeneration: number }> {
+    const result = await this.rpc('session.resume', { session_id: sessionId });
+    if (!isRecord(result) || typeof result.revision !== 'number' || typeof result.execution_generation !== 'number') {
+      throw new Error('Local Hermes Gateway did not report a session revision.');
+    }
+    return { revision: result.revision, executionGeneration: result.execution_generation };
   }
 
   public dispose(): void {
@@ -260,6 +331,58 @@ function parsePromptEvent(sessionId: string, type: string, payload: unknown): Ga
     return { sessionId, type, text: payload.text };
   }
   return undefined;
+}
+
+function parseModelOptions(value: unknown): GatewayModelOptions {
+  if (!isRecord(value)) {
+    throw new Error('Local Hermes Gateway returned no model options.');
+  }
+  const providers = Array.isArray(value.providers)
+    ? value.providers.flatMap((row): GatewayModelProvider[] => {
+      if (!isRecord(row) || typeof row.slug !== 'string') {
+        return [];
+      }
+      const models = Array.isArray(row.models)
+        ? row.models.filter((model): model is string => typeof model === 'string' && model.length > 0)
+        : [];
+      if (models.length === 0) {
+        return [];
+      }
+      return [{
+        slug: row.slug,
+        name: typeof row.name === 'string' && row.name.length > 0 ? row.name : row.slug,
+        models,
+        ...(row.is_current === true ? { isCurrent: true } : {})
+      }];
+    })
+    : [];
+  return {
+    providers,
+    model: typeof value.model === 'string' ? value.model : '',
+    provider: typeof value.provider === 'string' ? value.provider : ''
+  };
+}
+
+function parseModelSwitchOutcome(value: unknown): GatewayModelSwitchOutcome {
+  if (!isRecord(value)) {
+    throw new Error('Local Hermes Gateway rejected the model switch.');
+  }
+  if (value.status === 'confirmation_required' && typeof value.confirm === 'string' && typeof value.target_model === 'string') {
+    return {
+      kind: 'confirmation_required',
+      confirm: value.confirm,
+      model: value.target_model,
+      provider: typeof value.target_provider === 'string' ? value.target_provider : '',
+      message: typeof value.confirm_message === 'string' ? value.confirm_message : 'The model switch needs confirmation.'
+    };
+  }
+  if (value.status === 'noop' && typeof value.model === 'string') {
+    return { kind: 'noop', model: value.model };
+  }
+  if (typeof value.model === 'string') {
+    return { kind: 'applied', model: value.model, provider: typeof value.provider === 'string' ? value.provider : '' };
+  }
+  throw new Error('Local Hermes Gateway returned an unrecognized model switch result.');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

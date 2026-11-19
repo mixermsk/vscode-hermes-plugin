@@ -191,6 +191,60 @@ body {
   gap: 6px;
 }
 
+.composer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.selectors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.model-picker-label {
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.reasoning-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.reasoning-picker-label {
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+select.model-select,
+select.reasoning-select {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  background: var(--vscode-input-background);
+  font: inherit;
+}
+
 textarea,
 button {
   box-sizing: border-box;

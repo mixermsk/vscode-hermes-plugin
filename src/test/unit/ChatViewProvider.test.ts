@@ -15,7 +15,10 @@ suite('ChatViewProvider', () => {
     assert.doesNotMatch(html, /id="subagents"/);
     assert.ok(html.indexOf('id="messages"') < html.indexOf('id="form"'));
     assert.match(html, /id="auto-approve-edits"/);
+    assert.match(html, /id="model"/);
     assert.match(html, /id="prompt"/);
+    assert.ok(html.indexOf('id="auto-approve-edits"') < html.indexOf('id="model"'));
+    assert.ok(html.indexOf('id="model"') < html.indexOf('id="prompt"'));
     assert.match(html, /<button id="send" type="submit" disabled>Send<\/button>/);
     assert.match(html, /<link rel="stylesheet" href="vscode-webview:\/\/chat\.css">/);
     assert.match(html, /<script src="vscode-webview:\/\/marked\.js"><\/script>/);
@@ -223,6 +226,49 @@ suite('ChatViewProvider', () => {
 
     harness.receive({ type: 'auto-approve-edits', enabled: false });
     assert.equal(harness.autoApproveEdits.checked, false);
+  });
+
+  test('renders model options and posts the chosen model with its provider', () => {
+    const harness = createChatHarness(chatScript());
+
+    assert.equal(harness.model.disabled, true);
+
+    harness.receive({
+      type: 'model-options',
+      model: 'deepseek-v4-pro',
+      provider: 'deepseek',
+      providers: [
+        { slug: 'deepseek', name: 'DeepSeek', isCurrent: true, models: ['deepseek-v4-pro', 'deepseek-v4-flash'] },
+        { slug: 'anthropic', name: 'Anthropic', models: ['claude-4.5'] }
+      ]
+    });
+
+    assert.equal(harness.model.disabled, false);
+    assert.equal(harness.model.selectedIndex, 0);
+
+    harness.model.selectedIndex = 2;
+    harness.selectModel();
+
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [
+      { type: 'select-model', model: 'claude-4.5', provider: 'anthropic' }
+    ]);
+  });
+
+  test('renders the reasoning level and posts a new effort selection', () => {
+    const harness = createChatHarness(chatScript());
+
+    assert.equal(harness.reasoning.disabled, true);
+
+    harness.receive({ type: 'reasoning', effort: 'medium' });
+
+    assert.equal(harness.reasoning.disabled, false);
+    assert.equal(harness.reasoning.value, 'medium');
+
+    harness.selectReasoning('high');
+
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.posted)), [
+      { type: 'select-reasoning', effort: 'high' }
+    ]);
   });
 
   test('contributes the chat as a Secondary Side Bar view', () => {
@@ -439,10 +485,14 @@ function createChatHarness(script: string): {
   messages: FakeElement;
   prompt: FakeElement;
   send: FakeElement;
+  model: FakeElement;
+  reasoning: FakeElement;
   posted: unknown[];
   keydown(key: string, modifiers?: { metaKey?: boolean; shiftKey?: boolean }): { defaultPrevented: boolean };
   submit(): { defaultPrevented: boolean };
   toggleAutoApproveEdits(enabled: boolean): void;
+  selectModel(): void;
+  selectReasoning(effort: string): void;
   receive(message: unknown): void;
 } {
   const elements = new Map<string, FakeElement>([
@@ -454,7 +504,9 @@ function createChatHarness(script: string): {
     ['messages', new FakeElement()],
     ['form', new FakeElement()],
     ['prompt', new FakeElement()],
-    ['send', new FakeElement()]
+    ['send', new FakeElement()],
+    ['model', new FakeElement()],
+    ['reasoning', new FakeElement()]
   ]);
   elements.get('activity')!.hidden = true;
   elements.get('subagent-tracking')!.hidden = true;
@@ -462,6 +514,8 @@ function createChatHarness(script: string): {
   elements.get('auto-approve-edits')!.disabled = true;
   elements.get('prompt')!.disabled = true;
   elements.get('send')!.disabled = true;
+  elements.get('model')!.disabled = true;
+  elements.get('reasoning')!.disabled = true;
   const posted: unknown[] = [];
   let messageListener: ((event: { data: unknown }) => void) | undefined;
   vm.runInNewContext(script, {
@@ -501,6 +555,8 @@ function createChatHarness(script: string): {
     messages: elements.get('messages')!,
     prompt: elements.get('prompt')!,
     send: elements.get('send')!,
+    model: elements.get('model')!,
+    reasoning: elements.get('reasoning')!,
     posted,
     keydown(key: string, modifiers = {}) {
       const event = {
@@ -526,6 +582,14 @@ function createChatHarness(script: string): {
       checkbox.checked = enabled;
       checkbox.dispatch('change', {});
     },
+    selectModel() {
+      elements.get('model')!.dispatch('change', {});
+    },
+    selectReasoning(effort: string) {
+      const select = elements.get('reasoning')!;
+      select.value = effort;
+      select.dispatch('change', {});
+    },
     receive(message: unknown) {
       assert.ok(messageListener, 'expected the webview to register a message listener');
       messageListener({ data: message });
@@ -542,6 +606,7 @@ class FakeElement {
   public checked = false;
   public disabled = false;
   public hidden = false;
+  public selectedIndex = -1;
   public scrollTop = 0;
   public scrollHeight = 0;
   private readonly listeners = new Map<string, (event: unknown) => void>();

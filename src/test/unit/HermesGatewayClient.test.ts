@@ -4,6 +4,8 @@ import type { GatewayConnection } from '../../gateway/GatewayConnectionFactory';
 
 class FakeGatewayConnection implements GatewayConnection {
   public readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  public modelOptions: unknown = { providers: [], model: '', provider: '' };
+  public mutateResult: ((payload: Record<string, unknown>) => unknown) | undefined;
   private listener: ((event: unknown) => void) | undefined;
 
   public async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -25,6 +27,22 @@ class FakeGatewayConnection implements GatewayConnection {
     }
     if (method === 'session.interrupt') {
       return { status: 'interrupted' };
+    }
+    if (method === 'model.options') {
+      return this.modelOptions;
+    }
+    if (method === 'config.get') {
+      return { value: 'medium', display: 'show' };
+    }
+    if (method === 'session.resume') {
+      return { session_id: params.session_id, revision: 3, execution_generation: 1, messages: [] };
+    }
+    if (method === 'session.mutate') {
+      const payload = typeof params.payload === 'object' && params.payload !== null ? (params.payload as Record<string, unknown>) : {};
+      if (this.mutateResult !== undefined) {
+        return this.mutateResult(payload);
+      }
+      return { session_id: params.session_id, operation: 'model', model: payload.model, provider: payload.provider ?? '' };
     }
     throw new Error(`Unexpected RPC: ${method}`);
   }
@@ -146,6 +164,95 @@ suite('HermesGatewayClient', () => {
     assert.deepEqual(connection.calls.at(-1), {
       method: 'session.interrupt',
       params: { session_id: 'session-1', execution_generation: 7 }
+    });
+  });
+
+  test('lists the session model options and switches to another model', async () => {
+    const connection = new FakeGatewayConnection();
+    connection.modelOptions = {
+      model: 'deepseek-v4-pro',
+      provider: 'deepseek',
+      providers: [
+        { slug: 'deepseek', name: 'DeepSeek', is_current: true, models: ['deepseek-v4-pro', 'deepseek-v4-flash'], total_models: 2 },
+        { slug: 'anthropic', name: 'Anthropic', models: ['claude-4.5'], total_models: 1 }
+      ]
+    };
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    await client.createSession('/work/project');
+
+    assert.deepEqual(await client.getModelOptions('session-1'), {
+      model: 'deepseek-v4-pro',
+      provider: 'deepseek',
+      providers: [
+        { slug: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-pro', 'deepseek-v4-flash'], isCurrent: true },
+        { slug: 'anthropic', name: 'Anthropic', models: ['claude-4.5'] }
+      ]
+    });
+
+    const outcome = await client.setModel('session-1', 'claude-4.5', 'anthropic');
+
+    assert.deepEqual(outcome, { kind: 'applied', model: 'claude-4.5', provider: 'anthropic' });
+    assert.deepEqual(connection.calls.at(-1), {
+      method: 'session.mutate',
+      params: {
+        session_id: 'session-1',
+        request_id: 'vscode-model-1',
+        expected_revision: 3,
+        expected_generation: 1,
+        operation: 'model',
+        payload: { model: 'claude-4.5', provider: 'anthropic' }
+      }
+    });
+  });
+
+  test('surfaces a confirmation-required model switch without applying it', async () => {
+    const connection = new FakeGatewayConnection();
+    connection.modelOptions = { providers: [], model: '', provider: '' };
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+    connection.mutateResult = (payload: Record<string, unknown>) => ({
+      status: 'confirmation_required',
+      confirm: 'bound-token',
+      target_model: payload.model,
+      target_provider: payload.provider ?? '',
+      confirm_message: 'Switching may exceed your plan.'
+    });
+
+    await client.connect();
+    await client.createSession('/work/project');
+    const outcome = await client.setModel('session-1', 'gpt-5', 'openai');
+
+    assert.deepEqual(outcome, {
+      kind: 'confirmation_required',
+      confirm: 'bound-token',
+      model: 'gpt-5',
+      provider: 'openai',
+      message: 'Switching may exceed your plan.'
+    });
+  });
+
+  test('reads and sets the session reasoning level', async () => {
+    const connection = new FakeGatewayConnection();
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+    await client.createSession('/work/project');
+
+    assert.equal(await client.getReasoning('session-1'), 'medium');
+
+    await client.setReasoning('session-1', 'high');
+
+    assert.deepEqual(connection.calls.at(-1), {
+      method: 'session.mutate',
+      params: {
+        session_id: 'session-1',
+        request_id: 'vscode-reasoning-1',
+        expected_revision: 3,
+        expected_generation: 1,
+        operation: 'reasoning',
+        payload: { effort: 'high' }
+      }
     });
   });
 });

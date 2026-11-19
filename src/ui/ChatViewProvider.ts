@@ -1,12 +1,15 @@
 import { readFileSync } from 'node:fs';
 import type * as vscode from 'vscode';
 import type { SubagentSnapshot } from '../domain/Subagent';
+import type { GatewayModelOptions } from '../gateway/HermesGatewayClient';
 
 export type ChatPromptHandler = (text: string) => Promise<void>;
 export type ChatCancelHandler = () => Promise<void>;
 export type ChatConnectionHandler = () => Promise<void>;
 export type ChatLocationHandler = (location: ChatToolLocation) => Promise<void>;
 export type ChatAutoApproveEditsHandler = (enabled: boolean) => Promise<void>;
+export type ChatModelSelectionHandler = (model: string, provider: string | undefined) => Promise<void>;
+export type ChatReasoningSelectionHandler = (effort: string) => Promise<void>;
 
 export interface ChatMessage {
   role: 'user' | 'agent' | 'error';
@@ -69,9 +72,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private connectionHandler: ChatConnectionHandler | undefined;
   private locationHandler: ChatLocationHandler | undefined;
   private autoApproveEditsHandler: ChatAutoApproveEditsHandler | undefined;
+  private modelSelectionHandler: ChatModelSelectionHandler | undefined;
+  private reasoningSelectionHandler: ChatReasoningSelectionHandler | undefined;
   private sessionId: string | undefined;
   private sessionTitle: string | undefined;
   private subagentTracking: ChatSubagentTrackingStatus | undefined;
+  private modelOptions: GatewayModelOptions | undefined;
+  private reasoningEffort: string | undefined;
   private promptRunning = false;
   private readonly entries: ChatTranscriptEntry[] = [];
   private activity: string | undefined;
@@ -120,6 +127,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         return;
       }
+      if (isSelectModelMessage(message)) {
+        try {
+          await this.modelSelectionHandler?.(message.model, message.provider);
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          await view.webview.postMessage({ type: 'error', text });
+        }
+        return;
+      }
+      if (isSelectReasoningMessage(message)) {
+        try {
+          await this.reasoningSelectionHandler?.(message.effort);
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          await view.webview.postMessage({ type: 'error', text });
+          if (this.reasoningEffort !== undefined) {
+            await view.webview.postMessage({ type: 'reasoning', effort: this.reasoningEffort });
+          }
+        }
+        return;
+      }
       if (!isPromptMessage(message)) {
         return;
       }
@@ -161,6 +189,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   public setAutoApproveEditsHandler(handler: ChatAutoApproveEditsHandler): void {
     this.autoApproveEditsHandler = handler;
+  }
+
+  public setModelSelectionHandler(handler: ChatModelSelectionHandler): void {
+    this.modelSelectionHandler = handler;
+  }
+
+  public setReasoningSelectionHandler(handler: ChatReasoningSelectionHandler): void {
+    this.reasoningSelectionHandler = handler;
+  }
+
+  public setReasoningEffort(effort: string): void {
+    this.reasoningEffort = effort;
+    void this.view?.webview.postMessage({ type: 'reasoning', effort });
+  }
+
+  public setModelOptions(options: GatewayModelOptions): void {
+    this.modelOptions = cloneModelOptions(options);
+    void this.view?.webview.postMessage({ type: 'model-options', ...cloneModelOptions(options) });
   }
 
   public setSession(sessionId: string, handler: ChatPromptHandler, title?: string): void {
@@ -222,6 +268,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.promptHandler = undefined;
     this.subagentTracking = undefined;
     this.autoApproveEdits = false;
+    this.modelOptions = undefined;
+    this.reasoningEffort = undefined;
     this.promptRunning = false;
     this.entries.length = 0;
     this.tools.clear();
@@ -333,6 +381,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       title: this.sessionTitle,
       autoApproveEdits: this.autoApproveEdits,
       ...(this.subagentTracking === undefined ? {} : { subagentTracking: this.subagentTracking }),
+      ...(this.modelOptions === undefined ? {} : { modelOptions: cloneModelOptions(this.modelOptions) }),
+      ...(this.reasoningEffort === undefined ? {} : { reasoning: this.reasoningEffort }),
       entries: this.entries.map(cloneTranscriptEntry)
     });
     this.postActivity();
@@ -378,6 +428,13 @@ function cloneTool(tool: ChatTool): ChatTool {
   };
 }
 
+function cloneModelOptions(options: GatewayModelOptions): GatewayModelOptions {
+  return {
+    ...options,
+    providers: options.providers.map((provider) => ({ ...provider, models: [...provider.models] }))
+  };
+}
+
 export function renderChatHtml(template: string, resources: ChatWebviewResources): string {
   return template
     .replaceAll('{{cspSource}}', resources.cspSource)
@@ -414,4 +471,17 @@ function isAutoApproveEditsMessage(value: unknown): value is { type: 'auto-appro
   return typeof value === 'object' && value !== null
     && (value as { type?: unknown }).type === 'auto-approve-edits'
     && typeof (value as { enabled?: unknown }).enabled === 'boolean';
+}
+
+function isSelectModelMessage(value: unknown): value is { type: 'select-model'; model: string; provider?: string } {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'select-model'
+    && typeof (value as { model?: unknown }).model === 'string'
+    && ((value as { provider?: unknown }).provider === undefined || typeof (value as { provider?: unknown }).provider === 'string');
+}
+
+function isSelectReasoningMessage(value: unknown): value is { type: 'select-reasoning'; effort: string } {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'select-reasoning'
+    && typeof (value as { effort?: unknown }).effort === 'string';
 }
