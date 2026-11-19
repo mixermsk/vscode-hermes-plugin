@@ -46,6 +46,7 @@ export interface ChatSubagent {
   status: SubagentSnapshot['status'];
   activity?: string;
   summary?: string;
+  details?: string;
 }
 
 export interface ChatSubagentTrackingStatus {
@@ -236,16 +237,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public upsertSubagent(subagent: SubagentSnapshot): void {
-    const next: ChatSubagent = {
+    this.upsertChatSubagent({
       subagentId: subagent.id,
       title: subagent.title,
       status: subagent.status,
       ...(subagent.activity === undefined ? {} : { activity: subagent.activity }),
       ...(subagent.summary === undefined ? {} : { summary: subagent.summary })
-    };
-    const current = this.subagentEntries.get(subagent.id);
+    });
+  }
+
+  public upsertDelegation(subagent: ChatSubagent): void {
+    this.upsertChatSubagent(subagent);
+  }
+
+  private upsertChatSubagent(next: ChatSubagent): void {
+    const current = this.subagentEntries.get(next.subagentId);
     if (current === undefined) {
-      this.subagentEntries.set(subagent.id, next);
+      this.subagentEntries.set(next.subagentId, next);
       this.entries.push(next);
       void this.view?.webview.postMessage({ type: 'subagent', subagent: cloneSubagent(next) });
       return;
@@ -326,9 +334,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const previous = this.entries.at(-1);
     if (isChatMessage(previous) && previous.role === 'user') {
       previous.text += text;
-      return;
+    } else {
+      this.entries.push({ role: 'user', text });
     }
-    this.entries.push({ role: 'user', text });
+    void this.view?.webview.postMessage({ type: 'message', role: 'user', text });
   }
 
   private async connect(): Promise<void> {

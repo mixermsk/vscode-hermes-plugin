@@ -90,7 +90,7 @@ function updateTool(tool) {
 function appendSubagent(subagent) {
   activeAgentMessage = undefined;
   activeAgentText = '';
-  const row = document.createElement('div');
+  const row = document.createElement('details');
   subagentElements.set(subagent.subagentId, row);
   renderSubagent(row, subagent);
   messages.appendChild(row);
@@ -110,14 +110,23 @@ function updateSubagent(subagent) {
 function renderSubagent(row, subagent) {
   row.replaceChildren();
   row.className = `subagent ${subagent.status}`;
+  const summary = document.createElement('summary');
+  summary.className = 'subagent-summary';
   const label = document.createElement('span');
   label.className = 'subagent-label';
   label.textContent = subagent.title;
   const state = document.createElement('span');
   state.className = 'subagent-state';
   state.textContent = subagent.summary ?? subagent.activity ?? subagent.status;
-  row.appendChild(label);
-  row.appendChild(state);
+  summary.appendChild(label);
+  summary.appendChild(state);
+  row.appendChild(summary);
+  if (subagent.details) {
+    const body = document.createElement('div');
+    body.className = 'subagent-body';
+    body.textContent = subagent.details;
+    row.appendChild(body);
+  }
 }
 
 function renderTool(card, tool) {

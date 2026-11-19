@@ -1,4 +1,6 @@
 import type { GatewayConnection, GatewayConnectionFactory } from './GatewayConnectionFactory';
+import type { SubagentStatus } from '../domain/Subagent';
+import { randomUUID } from 'node:crypto';
 
 interface Subscription {
   dispose(): void;
@@ -9,10 +11,21 @@ export interface GatewayTranscriptMessage {
   text: string;
 }
 
+export interface GatewayDelegationEntry {
+  role: 'delegation';
+  subagentId: string;
+  title: string;
+  status: SubagentStatus;
+  summary: string;
+  details: string;
+}
+
+export type GatewayTranscriptEntry = GatewayTranscriptMessage | GatewayDelegationEntry;
+
 export interface GatewaySession {
   sessionId: string;
   title?: string;
-  messages: readonly GatewayTranscriptMessage[];
+  messages: readonly GatewayTranscriptEntry[];
 }
 
 export interface GatewayPromptEvent {
@@ -58,8 +71,6 @@ export class HermesGatewayClient {
   private readonly listeners = new Set<GatewayEventListener>();
   private readonly completions = new Map<string, Deferred<void>>();
   private readonly executionGenerations = new Map<string, number>();
-  private nextInputId = 1;
-  private nextMutationId = 1;
 
   public constructor(private readonly connectionFactory: GatewayConnectionFactory) {}
 
@@ -113,7 +124,7 @@ export class HermesGatewayClient {
     try {
       const result = await this.rpc('prompt.submit', {
         session_id: sessionId,
-        input_id: `vscode-${this.nextInputId++}`,
+        input_id: `vscode-${randomUUID()}`,
         text
       });
       if (!isRecord(result) || (result.status !== 'streaming' && result.status !== 'queued')) {
@@ -179,7 +190,7 @@ export class HermesGatewayClient {
     }
     const result = await this.rpc('session.mutate', {
       session_id: sessionId,
-      request_id: `vscode-model-${this.nextMutationId++}`,
+      request_id: `vscode-model-${randomUUID()}`,
       expected_revision: revision,
       expected_generation: executionGeneration,
       operation: 'model',
@@ -200,7 +211,7 @@ export class HermesGatewayClient {
     const { revision, executionGeneration } = await this.sessionFences(sessionId);
     await this.rpc('session.mutate', {
       session_id: sessionId,
-      request_id: `vscode-reasoning-${this.nextMutationId++}`,
+      request_id: `vscode-reasoning-${randomUUID()}`,
       expected_revision: revision,
       expected_generation: executionGeneration,
       operation: 'reasoning',
@@ -299,22 +310,124 @@ function isGatewayCompatible(value: unknown): boolean {
     && value.session_create.sources.includes('cli');
 }
 
-function parseTranscript(value: unknown): readonly GatewayTranscriptMessage[] {
+function parseTranscript(value: unknown): readonly GatewayTranscriptEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.flatMap((entry): GatewayTranscriptMessage[] => {
-    if (!isRecord(entry) || typeof entry.text !== 'string') {
-      return [];
+  // First pass: index delegation completions by id so a dispatch row can render its terminal
+  // state even though the notification row arrives later in the transcript.
+  const completionText = new Map<string, string>();
+  for (const raw of value) {
+    if (!isRecord(raw) || raw.role !== 'user' || typeof raw.display_kind !== 'string' || raw.display_kind === '') {
+      continue;
     }
-    if (entry.role === 'user') {
-      return [{ role: 'user', text: entry.text }];
+    const id = delegationIdOf(raw);
+    const text = displayTextOf(raw);
+    if (id !== undefined && text !== undefined) {
+      completionText.set(id, text);
     }
-    if (entry.role === 'assistant') {
-      return [{ role: 'assistant', text: entry.text }];
+  }
+
+  const entries: GatewayTranscriptEntry[] = [];
+  const emitted = new Set<string>();
+  for (const raw of value) {
+    if (!isRecord(raw)) {
+      continue;
     }
-    return [];
-  });
+    if (raw.role === 'tool' && raw.tool_name === 'delegate_task') {
+      const delegation = delegationDispatchEntry(raw, completionText);
+      if (delegation !== undefined) {
+        emitted.add(delegation.subagentId);
+        entries.push(delegation);
+      }
+      continue;
+    }
+    if (raw.role === 'user' && typeof raw.display_kind === 'string' && raw.display_kind !== '') {
+      const id = delegationIdOf(raw);
+      const key = id === undefined ? undefined : `delegation:${id}`;
+      const text = displayTextOf(raw);
+      if (text !== undefined && (key === undefined || !emitted.has(key))) {
+        entries.push({
+          role: 'delegation',
+          subagentId: key ?? `delegation:${String(raw.row_id ?? '') || 'unknown'}`,
+          title: 'Delegated task',
+          status: 'completed',
+          summary: 'Completed',
+          details: text
+        });
+      }
+      continue;
+    }
+    const text = typeof raw.content === 'string' ? raw.content
+      : typeof raw.text === 'string' ? raw.text
+      : undefined;
+    if (text === undefined) {
+      continue;
+    }
+    if (raw.role === 'user') {
+      entries.push({ role: 'user', text });
+    } else if (raw.role === 'assistant') {
+      entries.push({ role: 'assistant', text });
+    }
+  }
+  return entries;
+}
+
+function delegationDispatchEntry(raw: Record<string, unknown>, completionText: Map<string, string>): GatewayDelegationEntry | undefined {
+  const parsed = parseDelegationDispatch(raw.content);
+  if (parsed === undefined || parsed.goals.length === 0) {
+    return undefined;
+  }
+  const id = parsed.delegationId ?? '';
+  const key = `delegation:${id || String(raw.row_id ?? '') || 'unknown'}`;
+  const goalsText = parsed.goals.map((goal) => `• ${goal}`).join('\n');
+  const resultText = id === '' ? undefined : completionText.get(id);
+  const completed = resultText !== undefined;
+  return {
+    role: 'delegation',
+    subagentId: key,
+    title: 'Delegated task',
+    status: completed ? 'completed' : 'running',
+    summary: completed ? 'Completed' : 'Dispatched',
+    details: completed ? `${goalsText}\n\n${resultText}` : goalsText
+  };
+}
+
+function parseDelegationDispatch(content: unknown): { delegationId?: string; goals: string[] } | undefined {
+  if (typeof content !== 'string') {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (!isRecord(parsed) || !Array.isArray(parsed.goals)) {
+      return undefined;
+    }
+    const goals = parsed.goals.filter((goal): goal is string => typeof goal === 'string' && goal !== '');
+    if (goals.length === 0) {
+      return undefined;
+    }
+    return {
+      ...(typeof parsed.delegation_id === 'string' && parsed.delegation_id !== '' ? { delegationId: parsed.delegation_id } : {}),
+      goals
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function delegationIdOf(raw: Record<string, unknown>): string | undefined {
+  const messageId = raw.message_id;
+  if (Array.isArray(messageId) && messageId.length >= 2 && typeof messageId[1] === 'string' && messageId[1] !== '') {
+    return messageId[1];
+  }
+  return undefined;
+}
+
+function displayTextOf(raw: Record<string, unknown>): string | undefined {
+  const text = isRecord(raw.display_metadata) && typeof raw.display_metadata.display_text === 'string'
+    ? raw.display_metadata.display_text
+    : undefined;
+  return text === undefined || text === '' ? undefined : text;
 }
 
 function parsePromptEvent(sessionId: string, type: string, payload: unknown): GatewayPromptEvent | undefined {

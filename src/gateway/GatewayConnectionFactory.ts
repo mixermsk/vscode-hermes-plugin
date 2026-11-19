@@ -133,7 +133,7 @@ class JsonRpcGatewayConnection implements GatewayConnection {
       clearTimeout(pending.timer);
       this.pending.delete(frame.id);
       if (isRecord(frame.error)) {
-        pending.reject(new Error('Local Hermes Gateway rejected the request.'));
+        pending.reject(new Error(`Local Hermes Gateway rejected the request: ${gatewayErrorMessage(frame.error)}`));
       } else {
         pending.resolve(frame.result);
       }
@@ -215,4 +215,14 @@ function waitForOpen(socket: GatewayWebSocket): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function gatewayErrorMessage(error: Record<string, unknown>): string {
+  if (typeof error.message === 'string' && error.message !== '') {
+    return error.message;
+  }
+  if (isRecord(error.data) && typeof error.data.reason === 'string' && error.data.reason !== '') {
+    return error.data.reason;
+  }
+  return typeof error.code === 'number' ? `code ${error.code}` : 'unknown reason';
 }

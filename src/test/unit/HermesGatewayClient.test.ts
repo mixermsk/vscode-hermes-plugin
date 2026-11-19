@@ -5,6 +5,7 @@ import type { GatewayConnection } from '../../gateway/GatewayConnectionFactory';
 class FakeGatewayConnection implements GatewayConnection {
   public readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   public modelOptions: unknown = { providers: [], model: '', provider: '' };
+  public resumeMessages: unknown = [];
   public mutateResult: ((payload: Record<string, unknown>) => unknown) | undefined;
   private listener: ((event: unknown) => void) | undefined;
 
@@ -35,7 +36,7 @@ class FakeGatewayConnection implements GatewayConnection {
       return { value: 'medium', display: 'show' };
     }
     if (method === 'session.resume') {
-      return { session_id: params.session_id, revision: 3, execution_generation: 1, messages: [] };
+      return { session_id: params.session_id, revision: 3, execution_generation: 1, messages: this.resumeMessages };
     }
     if (method === 'session.mutate') {
       const payload = typeof params.payload === 'object' && params.payload !== null ? (params.payload as Record<string, unknown>) : {};
@@ -77,22 +78,23 @@ suite('HermesGatewayClient', () => {
       title: 'Gateway chat',
       messages: [{ role: 'user', text: 'Earlier prompt' }]
     });
-    assert.deepEqual(connection.calls, [
+    assert.deepEqual(connection.calls.slice(0, 3), [
       { method: 'runtime.describe', params: {} },
       { method: 'gateway.capabilities', params: {} },
       {
         method: 'session.create',
         params: { source: 'cli', cwd: '/work/project', cwd_explicit: true }
-      },
-      {
-        method: 'prompt.submit',
-        params: {
-          session_id: 'session-1',
-          input_id: 'vscode-1',
-          text: 'Inspect the repository'
-        }
       }
     ]);
+    assert.deepEqual(
+      {
+        method: connection.calls[3].method,
+        session_id: connection.calls[3].params.session_id,
+        text: connection.calls[3].params.text
+      },
+      { method: 'prompt.submit', session_id: 'session-1', text: 'Inspect the repository' }
+    );
+    assert.match(String(connection.calls[3].params.input_id), /^vscode-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     assert.deepEqual(events, [
       { sessionId: 'session-1', type: 'message.delta', text: 'Done' },
       { sessionId: 'session-1', type: 'message.complete', text: 'Done' }
@@ -194,17 +196,25 @@ suite('HermesGatewayClient', () => {
     const outcome = await client.setModel('session-1', 'claude-4.5', 'anthropic');
 
     assert.deepEqual(outcome, { kind: 'applied', model: 'claude-4.5', provider: 'anthropic' });
-    assert.deepEqual(connection.calls.at(-1), {
-      method: 'session.mutate',
-      params: {
+    const modelCall = connection.calls.at(-1);
+    assert.equal(modelCall?.method, 'session.mutate');
+    assert.deepEqual(
+      {
+        session_id: modelCall?.params.session_id,
+        expected_revision: modelCall?.params.expected_revision,
+        expected_generation: modelCall?.params.expected_generation,
+        operation: modelCall?.params.operation,
+        payload: modelCall?.params.payload
+      },
+      {
         session_id: 'session-1',
-        request_id: 'vscode-model-1',
         expected_revision: 3,
         expected_generation: 1,
         operation: 'model',
         payload: { model: 'claude-4.5', provider: 'anthropic' }
       }
-    });
+    );
+    assert.match(String(modelCall?.params.request_id), /^vscode-model-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   test('surfaces a confirmation-required model switch without applying it', async () => {
@@ -243,16 +253,72 @@ suite('HermesGatewayClient', () => {
 
     await client.setReasoning('session-1', 'high');
 
-    assert.deepEqual(connection.calls.at(-1), {
-      method: 'session.mutate',
-      params: {
+    const reasoningCall = connection.calls.at(-1);
+    assert.equal(reasoningCall?.method, 'session.mutate');
+    assert.deepEqual(
+      {
+        session_id: reasoningCall?.params.session_id,
+        expected_revision: reasoningCall?.params.expected_revision,
+        expected_generation: reasoningCall?.params.expected_generation,
+        operation: reasoningCall?.params.operation,
+        payload: reasoningCall?.params.payload
+      },
+      {
         session_id: 'session-1',
-        request_id: 'vscode-reasoning-1',
         expected_revision: 3,
         expected_generation: 1,
         operation: 'reasoning',
         payload: { effort: 'high' }
       }
+    );
+    assert.match(String(reasoningCall?.params.request_id), /^vscode-reasoning-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  test('replays resumed transcript messages from the gateway content field', async () => {
+    const connection = new FakeGatewayConnection();
+    connection.resumeMessages = [
+      { role: 'user', content: 'Sent from hermes-agent', row_id: 1 },
+      { role: 'assistant', content: 'Replying to it', row_id: 2 }
+    ];
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+
+    assert.deepEqual(await client.resumeSession('session-1'), {
+      sessionId: 'session-1',
+      messages: [
+        { role: 'user', text: 'Sent from hermes-agent' },
+        { role: 'assistant', text: 'Replying to it' }
+      ]
     });
+  });
+
+  test('collapses a delegation into a single spoiler entry and drops other tool rows', async () => {
+    const connection = new FakeGatewayConnection();
+    connection.resumeMessages = [
+      { role: 'user', content: 'Do the delegated work', row_id: 1 },
+      { role: 'tool', tool_name: 'delegate_task', content: '{"status":"dispatched","delegation_id":"deleg_abc","goals":["Return exactly the phrase","Also verify it"],"count":2}', row_id: 2 },
+      { role: 'tool', tool_name: 'read', content: 'file contents', row_id: 3 },
+      { role: 'assistant', content: 'Waiting for the subagent', row_id: 4 },
+      { role: 'user', content: '[ASYNC DELEGATION BATCH COMPLETE]', display_kind: 'async_delegation_complete', message_id: ['async_delegation', 'deleg_abc', ''], display_metadata: { display_text: 'Subagent Task Completed: Return exactly the phrase' }, row_id: 5 },
+      { role: 'assistant', content: 'delegated smoke test passed', row_id: 6 }
+    ];
+    const client = new HermesGatewayClient({ async create() { return connection; } });
+
+    await client.connect();
+
+    assert.deepEqual((await client.resumeSession('session-1')).messages, [
+      { role: 'user', text: 'Do the delegated work' },
+      {
+        role: 'delegation',
+        subagentId: 'delegation:deleg_abc',
+        title: 'Delegated task',
+        status: 'completed',
+        summary: 'Completed',
+        details: '• Return exactly the phrase\n• Also verify it\n\nSubagent Task Completed: Return exactly the phrase'
+      },
+      { role: 'assistant', text: 'Waiting for the subagent' },
+      { role: 'assistant', text: 'delegated smoke test passed' }
+    ]);
   });
 });

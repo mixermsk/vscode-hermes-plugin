@@ -180,7 +180,15 @@ export function activate(context: vscode.ExtensionContext): void {
           activeSessionTitle
         );
         for (const message of result.session.messages) {
-          if (message.role === 'user') {
+          if (message.role === 'delegation') {
+            chatProvider.upsertDelegation({
+              subagentId: message.subagentId,
+              title: message.title,
+              status: message.status,
+              summary: message.summary,
+              details: message.details
+            });
+          } else if (message.role === 'user') {
             chatProvider.appendUserText(message.text);
           } else {
             chatProvider.appendText(message.text);

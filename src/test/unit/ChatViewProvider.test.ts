@@ -128,6 +128,27 @@ suite('ChatViewProvider', () => {
     );
   });
 
+  test('renders delegated task details in a collapsible body', () => {
+    const harness = createChatHarness(chatScript());
+
+    harness.receive({
+      type: 'subagent',
+      subagent: {
+        subagentId: 'delegation:deleg_abc',
+        title: 'Delegated task',
+        status: 'completed',
+        summary: 'Completed',
+        details: '• Return exactly the phrase\n\nSubagent Task Completed: Return exactly the phrase'
+      }
+    });
+
+    const row = harness.messages.children[0];
+    assert.equal(row.className, 'subagent completed');
+    assert.match(row.textContent, /Delegated task/);
+    assert.match(row.textContent, /Completed/);
+    assert.match(row.textContent, /Subagent Task Completed: Return exactly the phrase/);
+  });
+
   test('renders a collapsible tool card and updates its status', () => {
     const harness = createChatHarness(chatScript());
 
@@ -444,6 +465,33 @@ suite('ChatViewProvider', () => {
       { type: 'activity', text: undefined },
       { type: 'ready' }
     ]);
+  });
+
+  test('posts a replayed user message to the resolved webview', async () => {
+    const provider = new ChatViewProvider({
+      mediaUri: {} as never,
+      templateUri: { fsPath: join(process.cwd(), 'media', 'chat.html') } as never,
+      stylesheetUri: {} as never,
+      markedUri: {} as never,
+      domPurifyUri: {} as never,
+      scriptUri: {} as never
+    });
+    const posted: unknown[] = [];
+    provider.setSession('session-1', async () => {});
+
+    provider.resolveWebviewView({
+      webview: {
+        cspSource: 'vscode-webview://chat',
+        asWebviewUri() { return { toString: () => 'vscode-webview://asset' }; },
+        async postMessage(message: unknown) { posted.push(message); return true; },
+        onDidReceiveMessage() { return { dispose() {} }; }
+      }
+    } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    provider.appendUserText('Sent from hermes-agent');
+
+    assert.deepEqual(posted.at(-1), { type: 'message', role: 'user', text: 'Sent from hermes-agent' });
   });
 
 });
