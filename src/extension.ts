@@ -38,6 +38,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   let connection: Promise<void> | undefined;
   let reconnectTimer: NodeJS.Timeout | undefined;
+  const reconnectDelayMs = 3_000;
   let activeSessionId: string | undefined;
   let activeSessionTitle: string | undefined;
   let autoApproveEditSessionId: string | undefined;
@@ -280,6 +281,7 @@ export function activate(context: vscode.ExtensionContext): void {
         subagents.clear();
         chatProvider.setDisconnected(message);
         connection = undefined;
+        scheduleReconnect();
         throw error;
       }
     })();
@@ -293,7 +295,7 @@ export function activate(context: vscode.ExtensionContext): void {
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
       void connect().catch(() => scheduleReconnect());
-    }, 1_000);
+    }, reconnectDelayMs);
   };
   const gatewayDisconnectSubscription = gateway.onDisconnect(() => {
     connection = undefined;
