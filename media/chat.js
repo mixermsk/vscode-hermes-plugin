@@ -2,7 +2,6 @@ const vscode = acquireVsCodeApi();
 const session = document.getElementById('session');
 const activity = document.getElementById('activity');
 const subagentTracking = document.getElementById('subagent-tracking');
-const autoApproveEdits = document.getElementById('auto-approve-edits');
 const messages = document.getElementById('messages');
 const form = document.getElementById('form');
 const prompt = document.getElementById('prompt');
@@ -266,8 +265,6 @@ function restore(message) {
   subagentElements.clear();
   setActivity();
   setSubagentTracking(message.subagentTracking);
-  autoApproveEdits.checked = Boolean(message.autoApproveEdits);
-  autoApproveEdits.disabled = false;
   if (message.modelOptions) {
     renderModelOptions(message.modelOptions);
   }
@@ -327,11 +324,6 @@ prompt.addEventListener('keydown', (event) => {
   event.preventDefault();
   sendPrompt();
 });
-
-autoApproveEdits.addEventListener('change', () => {
-  vscode.postMessage({ type: 'auto-approve-edits', enabled: autoApproveEdits.checked });
-});
-
 model.addEventListener('change', () => {
   const choice = modelChoices[model.selectedIndex];
   if (!choice) {
@@ -373,9 +365,6 @@ window.addEventListener('message', (event) => {
   if (message.type === 'subagent-tracking') {
     setSubagentTracking(message.status);
   }
-  if (message.type === 'auto-approve-edits') {
-    autoApproveEdits.checked = Boolean(message.enabled);
-  }
   if (message.type === 'model-options') {
     renderModelOptions(message);
   }
@@ -404,8 +393,6 @@ window.addEventListener('message', (event) => {
     prompt.disabled = true;
     setPromptRunning(false);
     send.disabled = true;
-    autoApproveEdits.checked = false;
-    autoApproveEdits.disabled = true;
     clearModelOptions();
     clearReasoning();
   }

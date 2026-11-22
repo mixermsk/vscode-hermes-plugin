@@ -46,14 +46,6 @@ body {
   color: var(--vscode-editorWarning-foreground);
 }
 
-.auto-approve-edits {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  color: var(--vscode-descriptionForeground);
-  font-size: 12px;
-}
 
 .subagent {
   border-left: 2px solid var(--vscode-progressBar-background);

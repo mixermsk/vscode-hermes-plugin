@@ -3,7 +3,6 @@ import { NodeGitCommandRunner, VsCodeKeyValueStore } from './vscode/VsCodeAdapte
 import { SessionRegistry } from './services/SessionRegistry';
 import { GatewaySessionService } from './services/GatewaySessionService';
 import { GitRepositoryResolver } from './services/GitRepositoryResolver';
-import { canAutoApproveFileEdit } from './services/ApprovalPolicy';
 import { LocalHermesGatewayConnectionFactory } from './gateway/GatewayConnectionFactory';
 import { HermesGatewayClient, type GatewayApproval } from './gateway/HermesGatewayClient';
 import { mergeSubagentSnapshot, parseGatewaySubagentEvent, parseGatewaySubagentList } from './gateway/GatewaySubagentSource';
@@ -41,7 +40,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const reconnectDelayMs = 3_000;
   let activeSessionId: string | undefined;
   let activeSessionTitle: string | undefined;
-  let autoApproveEditSessionId: string | undefined;
   let approvalDialogOpen = false;
   const streamedSessions = new Set<string>();
   const subagents = new Map<string, SubagentSnapshot>();
@@ -96,11 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const approvals = await gateway.pendingApprovals(sessionId);
       for (const approval of approvals) {
-        if (autoApproveEditSessionId === sessionId && canAutoApproveFileEdit(approval)) {
-          await respondApproval(gateway, sessionId, approval.requestId, 'session');
-        } else {
-          await resolveApproval(gateway, sessionId, approval);
-        }
+        await resolveApproval(gateway, sessionId, approval);
       }
     } catch (error) {
       output.appendLine(`Gateway approval handling failed: ${messageOf(error)}`);
@@ -121,7 +115,6 @@ export function activate(context: vscode.ExtensionContext): void {
       const session = await sessionService.createNew(workspaceFolder.uri.fsPath);
       activeSessionId = session.sessionId;
       activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
-      autoApproveEditSessionId = undefined;
       subagents.clear();
       chatProvider.clearTranscript();
       chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
@@ -143,7 +136,6 @@ export function activate(context: vscode.ExtensionContext): void {
       const session = await gateway.resumeSession(await gateway.branchSession(activeSessionId, title));
       activeSessionId = session.sessionId;
       activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
-      autoApproveEditSessionId = undefined;
       subagents.clear();
       chatProvider.clearTranscript();
       chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
@@ -242,9 +234,6 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         activeSessionId = result.session.sessionId;
         activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, result.session.title);
-        if (autoApproveEditSessionId !== activeSessionId) {
-          autoApproveEditSessionId = undefined;
-        }
         subagents.clear();
         chatProvider.setSession(
           activeSessionId,
@@ -277,7 +266,6 @@ export function activate(context: vscode.ExtensionContext): void {
         output.appendLine(`Gateway connection failed: ${message}`);
         activeSessionId = undefined;
         activeSessionTitle = undefined;
-        autoApproveEditSessionId = undefined;
         subagents.clear();
         chatProvider.setDisconnected(message);
         connection = undefined;
@@ -301,7 +289,6 @@ export function activate(context: vscode.ExtensionContext): void {
     connection = undefined;
     activeSessionId = undefined;
     activeSessionTitle = undefined;
-    autoApproveEditSessionId = undefined;
     subagents.clear();
     chatProvider.setDisconnected('Local Hermes Gateway disconnected. Reconnecting…');
     scheduleReconnect();
@@ -313,12 +300,6 @@ export function activate(context: vscode.ExtensionContext): void {
       throw new Error('Hermes is not connected. Reopen the chat and try again.');
     }
     await gateway.interrupt(activeSessionId);
-  });
-  chatProvider.setAutoApproveEditsHandler(async (enabled) => {
-    if (enabled && activeSessionId === undefined) {
-      throw new Error('Hermes is not connected. Reopen the chat and try again.');
-    }
-    autoApproveEditSessionId = enabled ? activeSessionId : undefined;
   });
   chatProvider.setModelSelectionHandler(async (model, provider) => {
     if (activeSessionId === undefined) {
@@ -364,7 +345,6 @@ export function activate(context: vscode.ExtensionContext): void {
     const session = await sessionService.resume(workspaceFolder.uri.fsPath, picked.sessionId);
     activeSessionId = session.sessionId;
     activeSessionTitle = await applyGatewaySessionTitle(activeSessionId, session.title);
-    autoApproveEditSessionId = undefined;
     subagents.clear();
     chatProvider.clearTranscript();
     chatProvider.setSession(activeSessionId, handlePrompt, activeSessionTitle);
